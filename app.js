@@ -159,6 +159,50 @@ function alternativesHtml(socket) {
     }).join('');
 }
 
+// ---------- swap plan tab ----------
+
+// Below this, a chain's gain is small for the distillers and farming it takes
+const SMALL_CHAIN_GAIN = 20;
+
+function sourceNote(step) {
+    if (!step.aug) return '';
+    if (step.owned) return ` <span class="muted">(in ${escapeHtml(ownedText(step.owned).toLowerCase())})</span>`;
+    return ' <span class="warn">(farm)</span>';
+}
+
+function stepHtml(step) {
+    const unit = unitFor(step.kind === 'move' ? step.to : step.socket);
+    const gain = `<span class="step-gain">${gainHtml(step.gain, unit)}</span>`;
+    if (step.kind === 'move') {
+        const replaces = step.replaces ? ` (replacing ${augLink(step.replaces)})` : '';
+        return `<li><strong>${escapeHtml(step.from.slotName)}</strong>: take out ${augLink(step.aug)} and put it in
+            <strong>${escapeHtml(step.to.slotName)}</strong>${replaces} ${gain}</li>`;
+    }
+    const what = step.aug ? `put in ${augLink(step.aug)}${sourceNote(step)}` : '<span class="muted">leave empty</span>';
+    return `<li><strong>${escapeHtml(step.socket.slotName)}</strong>: ${what} ${gain}</li>`;
+}
+
+function planTab() {
+    if (!result) return '<p class="muted">Load your inventory file first.</p>';
+    const { chains, simple } = Optimizer.swapPlan(result.sockets);
+    const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const chainHtml = chains.map((chain, index) => `
+        <div class="chain">
+            <h3>Chain ${index + 1}: ${gainHtml(chain.net)}${chain.isCycle ? ' <span class="muted">(swap)</span>' : ''}</h3>
+            <p class="muted">${count(chain.distillers, 'distiller')}, ${count(chain.farm, 'aug')} to farm${chain.net < SMALL_CHAIN_GAIN ? ' - <span class="warn">small gain for the work</span>' : ''}</p>
+            <ol>${chain.steps.map(stepHtml).join('')}</ol>
+        </div>`).join('');
+    const simpleRows = simple.map((step) => `<tr><td>${escapeHtml(step.socket.slotName)} <span class="muted">type ${step.socket.augType}</span></td>
+        <td>${step.aug ? augLink(step.aug) : '-'}</td><td>${step.aug ? (step.owned ? escapeHtml(ownedText(step.owned)) : '<span class="warn">Farm</span>') : ''}</td>
+        <td class="num">${gainHtml(step.gain, unitFor(step.socket))}</td></tr>`).join('');
+    return `<p class="muted">The same changes as the Optimizer, as steps. When an aug moves to another slot it sets off a chain of swaps, so each chain shows its net gain.
+        Every slot whose aug comes out uses a distiller.</p>
+        <h3>Moves</h3>${chainHtml || '<p class="muted">No moves; every change is a simple upgrade.</p>'}
+        <h3>Simple upgrades</h3>
+        ${simpleRows ? `<table><thead><tr><th>Slot</th><th>Aug</th><th>Get it from</th><th class="num">Gain</th></tr></thead><tbody>${simpleRows}</tbody></table>`
+            : '<p class="muted">None.</p>'}`;
+}
+
 // ---------- to farm tab ----------
 
 function farmEntries(owned) {
@@ -292,6 +336,7 @@ function renderSettings() {
 
 function renderTabs() {
     $('tab-optimizer').innerHTML = optimizerTab();
+    $('tab-plan').innerHTML = planTab();
     $('tab-farm').innerHTML = farmTab();
     $('tab-spells').innerHTML = spellsTab();
 }

@@ -366,7 +366,10 @@ export class Optimizer {
         for (const socket of targets) {
             if (!socket.choice?.movedFrom) continue;
             const source = socketByCurrent.get(socket.choice.aug.id);
-            if (source) source.movedTo = socket.slotName;
+            if (!source) continue;
+            source.movedTo = socket.slotName;
+            source.movedToSocket = socket;
+            socket.moveSource = source;
         }
         for (const socket of targets) socket.usedBy = usedBy;
         return {
@@ -374,6 +377,51 @@ export class Optimizer {
             twoHand: this.twoHandWhatIf(targets, inventory, settings),
             spellSockets: all.filter((socket) => socket.augType === SPELL_AUG_TYPE),
         };
+    }
+
+    // Turns an optimize() result into steps: chains of moves (an aug moved out of one slot sets off a run
+    // of swaps whose gain only makes sense as a whole) and simple one-slot upgrades.
+    static swapPlan(sockets) {
+        const gainOf = (socket) => (socket.choice?.score || 0) - (socket.current?.score || 0);
+        const changed = (socket) => socket.choice && !socket.choice.isCurrent;
+        const fillStep = (socket) => ({
+            kind: 'fill', socket, aug: socket.choice?.aug || null, owned: socket.choice?.owned || null, gain: gainOf(socket),
+        });
+        const chains = [];
+        const visited = new Set();
+        const walk = (start, isCycle) => {
+            const steps = [];
+            let socket = start;
+            while (socket && !visited.has(socket)) {
+                visited.add(socket);
+                const source = socket.moveSource;
+                if (source) {
+                    steps.push({ kind: 'move', aug: socket.choice.aug, from: source, to: socket, replaces: steps.length ? null : socket.current?.aug, gain: gainOf(socket) });
+                    socket = source;
+                } else {
+                    steps.push(fillStep(socket));
+                    socket = null;
+                }
+            }
+            const members = steps.flatMap((step) => (step.kind === 'move' ? [step.to] : [step.socket]));
+            chains.push({
+                steps, isCycle,
+                net: steps.reduce((total, step) => total + step.gain, 0),
+                // Every changed slot that held an aug needs it removed first
+                distillers: members.filter((socket) => socket.current).length,
+                farm: steps.filter((step) => step.kind === 'fill' && step.aug && !step.owned).length,
+            });
+        };
+        // A chain starts at the slot that receives a moved aug while its own aug isn't moved anywhere
+        for (const socket of sockets) if (socket.moveSource && !socket.movedToSocket) walk(socket, false);
+        // Whatever is left of the moves is a closed swap (A to B, B to A)
+        for (const socket of sockets) if (socket.moveSource && !visited.has(socket)) walk(socket, true);
+        chains.sort((a, b) => b.net - a.net);
+
+        const simple = sockets.filter((socket) => changed(socket) && !visited.has(socket) && !socket.movedToSocket)
+            .map((socket) => ({ ...fillStep(socket), distillers: socket.current ? 1 : 0 }))
+            .sort((a, b) => b.gain - a.gain);
+        return { chains, simple };
     }
 
     // Best aug for a two-handed weapon you might swap to. It replaces the primary and secondary, so only

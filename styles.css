@@ -96,6 +96,12 @@ tr.alt td { background: var(--panel-2); font-size: 13px; }
 td.num, th.num { text-align: right; }
 .fx { color: var(--muted); font-size: 12px; }
 a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
+.chain { border-left: 3px solid var(--border); padding: 2px 0 2px 12px; margin: 10px 0; }
+.chain h3 { margin: 4px 0; }
+.chain p { margin: 2px 0 6px; }
+.chain ol { margin: 0; padding-left: 22px; }
+.chain li { margin: 4px 0; }
+.step-gain { margin-left: 6px; }
 .toggle { background: none; border: none; color: var(--muted); padding: 0 4px; width: 1.6em; }
 h3 { margin: 14px 0 6px; font-size: 15px; }
 .summary { margin: 0 0 8px; }
