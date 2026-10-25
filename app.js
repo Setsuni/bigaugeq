@@ -1,5 +1,5 @@
 import {
-    ALL_ERAS, CLASSES, Optimizer, PRESETS, STATS, classList, classPreset, parseInventory,
+    ALL_ERAS, CLASSES, FOCUS_TYPES, Optimizer, PRESETS, STATS, classList, classPreset, parseInventory,
     restrictionLabel, typesFromMask,
 } from './core.js';
 
@@ -27,16 +27,25 @@ function storageSet(key, value) {
 }
 
 function defaultSettings() {
-    const preset = classPreset('SHD');
     return {
         classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false,
+        ...presetValues(classPreset('SHD')),
+    };
+}
+
+function presetValues(preset) {
+    return {
         preset: preset.name, weights: { ...preset.weights }, shieldAc: preset.shieldAc,
+        focusWeights: { ...(preset.focusWeights || {}) },
     };
 }
 
 function loadSettings() {
     const saved = JSON.parse(storageGet(SETTINGS_KEY) || 'null');
-    return { ...defaultSettings(), ...(saved || {}) };
+    const loaded = { ...defaultSettings(), ...(saved || {}) };
+    // Settings saved before focus weights existed take them from the class preset
+    if (!saved?.focusWeights) loaded.focusWeights = { ...(classPreset(loaded.classCode).focusWeights || {}) };
+    return loaded;
 }
 
 function saveSettings() {
@@ -56,6 +65,17 @@ function augLink(aug, label) {
     const url = `https://everquest.allakhazam.com/search.html?q=${encodeURIComponent(aug.n)}`;
     return `<a class="aug" data-id="${aug.id}" href="${url}" target="_blank" rel="noopener">${text}</a>`;
 }
+
+const REPORT_URL = 'https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml';
+
+// Link to the correction form with this aug filled in.
+function reportLink(aug) {
+    const params = new URLSearchParams({ title: `Expansion fix: ${aug.n}`, aug: aug.n, item_id: String(aug.id), current: eraText(aug) });
+    return ` <a class="report" href="${REPORT_URL}&${params}" target="_blank" rel="noopener" title="Report a wrong expansion">report</a>`;
+}
+
+// Focus effect as a small second line under an aug name.
+const effectLine = (aug) => (aug.fx ? `<div class="fx">${escapeHtml(aug.fx)}</div>` : '');
 
 function gainHtml(gain, unit = '') {
     const text = `${gain > 0 ? '+' : ''}${gain}${unit}`;
@@ -91,11 +111,16 @@ function optimizerTab() {
         let optimized = '<span class="muted">-</span>';
         if (choice?.isCurrent) optimized = '<span class="muted">Keep current</span>';
         else if (choice) {
-            const note = choice.movedFrom ? `move from ${choice.movedFrom}` : choice.owned ? `in ${ownedText(choice.owned).toLowerCase()}` : '';
-            optimized = augLink(choice.aug) + (note ? ` <span class="muted">(${escapeHtml(note)})</span>` : '');
+            const note = [choice.movedFrom ? `move from ${choice.movedFrom}` : choice.owned ? `in ${ownedText(choice.owned).toLowerCase()}` : '',
+                choice.focusBonus ? `focus +${choice.focusBonus}` : ''].filter(Boolean).join(', ');
+            optimized = augLink(choice.aug) + (note ? ` <span class="muted">(${escapeHtml(note)})</span>` : '') + effectLine(choice.aug);
+        }
+        if (socket.movedTo && socket.current) {
+            optimized += `<br><span class="muted">your ${escapeHtml(socket.current.aug.n)} moves to ${escapeHtml(socket.movedTo)}</span>`;
         }
         const gain = choice ? gainHtml(choice.score - (socket.current?.score || 0), unitFor(socket)) : '';
-        return socketRow(String(index), socket, socket.current ? augLink(socket.current.aug) : '<span class="warn">Empty</span>', optimized, gain);
+        const current = socket.current ? augLink(socket.current.aug) + effectLine(socket.current.aug) : '<span class="warn">Empty</span>';
+        return socketRow(String(index), socket, current, optimized, gain);
     }).join('');
     return `<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). Weapon damage ${gainHtml(damage)}.
         <span class="muted">Lore augs are used once. Expand a slot for more options.</span></p>
@@ -126,10 +151,11 @@ function alternativesHtml(socket) {
     const others = socket.options.filter((option) => option !== socket.choice).slice(0, ALTERNATIVES);
     if (!others.length) return '<tr class="alt"><td></td><td colspan="3" class="muted">No other options under these filters.</td></tr>';
     return others.map((option, index) => {
-        const usedIn = option.aug.k && socket.usedBy.get(option.aug.k);
+        const key = Optimizer.optionKey(option);
+        const usedIn = key && socket.usedBy.get(key);
         const gain = usedIn ? `<span class="muted">lore, used in ${escapeHtml(usedIn)}</span>`
             : gainHtml(option.score - (socket.whatIf ? 0 : socket.current?.score || 0), unitFor(socket));
-        return `<tr class="alt"><td class="muted">#${index + 2}</td><td></td><td>${augLink(option.aug)}</td><td class="num">${gain}</td></tr>`;
+        return `<tr class="alt"><td class="muted">#${index + 2}</td><td></td><td>${augLink(option.aug)}${effectLine(option.aug)}</td><td class="num">${gain}</td></tr>`;
     }).join('');
 }
 
@@ -153,8 +179,9 @@ function farmEntries(owned) {
 function farmTable(entries, owned) {
     if (!entries.length) return '<p class="muted">Nothing here.</p>';
     const rows = entries.map((entry) => `<tr><td>${augLink(entry.aug)}</td><td>${escapeHtml(entry.slots.join(', '))}</td>
-        <td class="num">${gainHtml(entry.gain, entry.unit)}</td><td>${escapeHtml(owned ? ownedText(entry.owned) : eraText(entry.aug))}</td></tr>`).join('');
-    return `<table><thead><tr><th>Aug</th><th>For</th><th class="num">Gain</th><th>${owned ? 'Where' : 'Era'}</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <td class="num">${gainHtml(entry.gain, entry.unit)}</td><td>${owned ? escapeHtml(ownedText(entry.owned)) : escapeHtml(eraText(entry.aug)) + reportLink(entry.aug)}</td>
+        <td class="muted">${escapeHtml(entry.aug.fx || '')}</td></tr>`).join('');
+    return `<table><thead><tr><th>Aug</th><th>For</th><th class="num">Gain</th><th>${owned ? 'Where' : 'Era'}</th><th>Effect</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function farmTab() {
@@ -177,11 +204,12 @@ function spellsTab() {
         <td>${index === 0 ? escapeHtml(line.spell) : ''}</td>
         <td>${index === 0 ? escapeHtml(line.expansion || '') : ''}</td>
         <td>${augLink(entry.aug)}</td>
+        <td class="muted">${escapeHtml(entry.aug.fx || '')}</td>
         <td class="${statusClass[entry.status]}">${entry.status}${entry.owned ? ` <span class="muted">(${escapeHtml(ownedText(entry.owned))})</span>` : ''}</td></tr>`)).join('');
     return `<h3>Your type 3 sockets</h3><ul>${sockets || '<li class="muted">None found.</li>'}</ul>
         <h3>Spell augs for ${escapeHtml(CLASSES.find(([code]) => code === settings.classCode)[1])} at level ${settings.level}</h3>
         <p class="muted">The highest spell you can have in each spell line at this level and era, and the augs that boost it.</p>
-        <table><thead><tr><th class="num">Level</th><th>Spell</th><th>Expansion</th><th>Aug</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <table><thead><tr><th class="num">Level</th><th>Spell</th><th>Expansion</th><th>Aug</th><th>Effect</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ---------- search tab ----------
@@ -193,10 +221,11 @@ function runSearch() {
     const weighted = STATS.filter(([key]) => settings.weights[key]);
     $('searchCount').textContent = `${rows.length} results`;
     $('searchResults').innerHTML = `<table><thead><tr><th>Name</th><th>Era</th><th>Types</th><th>Gear</th><th class="num">Score</th>
-        ${weighted.map(([, label]) => `<th class="num">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(({ aug, score }) => `<tr>
-        <td>${augLink(aug)}</td><td>${escapeHtml(eraText(aug))}</td><td>${typesFromMask(aug.t).join(' ')}</td>
+        ${weighted.map(([, label]) => `<th class="num">${label}</th>`).join('')}<th>Effect</th></tr></thead><tbody>${rows.map(({ aug, score }) => `<tr>
+        <td>${augLink(aug)}</td><td>${escapeHtml(eraText(aug))}${reportLink(aug)}</td><td>${typesFromMask(aug.t).join(' ')}</td>
         <td>${restrictionLabel(aug.r)}</td><td class="num">${score}</td>
-        ${weighted.map(([key]) => `<td class="num">${aug.s?.[key] || 0}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+        ${weighted.map(([key]) => `<td class="num">${aug.s?.[key] || 0}</td>`).join('')}
+        <td class="muted">${escapeHtml(aug.fx || '')}</td></tr>`).join('')}</tbody></table>`;
 }
 
 // ---------- tooltip ----------
@@ -208,6 +237,7 @@ function tooltipHtml(aug) {
         <div>Slot types: ${typesFromMask(aug.t).join(' ')} &nbsp; Gear: ${restrictionLabel(aug.r)}${aug.k ? ' &nbsp; LORE' : ''}</div>
         ${stats.length ? `<div>${stats.join(' &nbsp; ')}</div>` : ''}
         ${aug.sp ? `<div>Boosts: ${escapeHtml(aug.sp)}</div>` : ''}
+        ${aug.fx ? `<div>Effect: ${escapeHtml(aug.fx)}</div>` : ''}
         <div>Req level ${aug.l} &nbsp; Rec level ${aug.rl} &nbsp; Era ${escapeHtml(eraText(aug))}</div>
         <div>Classes: ${classList(aug.c)}</div>
         <div class="muted">Click to look it up on Allakhazam</div>`;
@@ -257,6 +287,7 @@ function renderSettings() {
     $('presetSummary').textContent = `(${settings.preset})`;
     $('shieldAc').value = settings.shieldAc;
     $('weights').innerHTML = STATS.map(([key, label]) => `<label>${label} <input type="number" data-weight="${key}" value="${settings.weights[key] || 0}"></label>`).join('');
+    $('focusWeights').innerHTML = FOCUS_TYPES.map(([key, label]) => `<label>${label} <input type="number" data-focus="${key}" value="${settings.focusWeights[key] || 0}"></label>`).join('');
 }
 
 function renderTabs() {
@@ -296,7 +327,7 @@ function readFile(file) {
 // Any weight edit becomes the user's Custom set, restored whenever Custom is picked again.
 function saveCustom() {
     settings.preset = CUSTOM_PRESET;
-    settings.custom = { weights: { ...settings.weights }, shieldAc: settings.shieldAc };
+    settings.custom = { weights: { ...settings.weights }, shieldAc: settings.shieldAc, focusWeights: { ...settings.focusWeights } };
     $('preset').value = CUSTOM_PRESET;
     $('presetSummary').textContent = `(${CUSTOM_PRESET})`;
     changed();
@@ -305,8 +336,7 @@ function saveCustom() {
 function wireSettings() {
     $('class').addEventListener('change', () => {
         settings.classCode = $('class').value;
-        const preset = classPreset(settings.classCode);
-        Object.assign(settings, { preset: preset.name, weights: { ...preset.weights }, shieldAc: preset.shieldAc });
+        Object.assign(settings, presetValues(classPreset(settings.classCode)));
         renderSettings();
         changed();
     });
@@ -317,9 +347,9 @@ function wireSettings() {
     }
     $('preset').addEventListener('change', () => {
         const preset = $('preset').value === CUSTOM_PRESET
-            ? { name: CUSTOM_PRESET, ...(settings.custom || { weights: settings.weights, shieldAc: settings.shieldAc }) }
+            ? { name: CUSTOM_PRESET, ...(settings.custom || { weights: settings.weights, shieldAc: settings.shieldAc, focusWeights: settings.focusWeights }) }
             : PRESETS.find((p) => p.name === $('preset').value);
-        Object.assign(settings, { preset: preset.name, weights: { ...preset.weights }, shieldAc: preset.shieldAc });
+        Object.assign(settings, presetValues(preset));
         // Custom is the user's own set, so show it for editing
         if (preset.name === CUSTOM_PRESET) $('weightsPanel').open = true;
         renderSettings();
@@ -333,6 +363,12 @@ function wireSettings() {
         const key = event.target.dataset.weight;
         if (!key) return;
         settings.weights[key] = Number(event.target.value) || 0;
+        saveCustom();
+    });
+    $('focusWeights').addEventListener('change', (event) => {
+        const key = event.target.dataset.focus;
+        if (!key) return;
+        settings.focusWeights[key] = Number(event.target.value) || 0;
         saveCustom();
     });
     $('searchButton').addEventListener('click', runSearch);
@@ -357,8 +393,8 @@ function wireSettings() {
 
 async function start() {
     const load = (name) => fetch(`data/${name}.json`).then((response) => response.json());
-    const [meta, augs, hosts, spells] = await Promise.all(['meta', 'augs', 'hosts', 'spells'].map(load));
-    optimizer = new Optimizer({ meta, augs, hosts, spells });
+    const [meta, augs, hosts, spells, focus] = await Promise.all(['meta', 'augs', 'hosts', 'spells', 'focus'].map(load));
+    optimizer = new Optimizer({ meta, augs, hosts, spells, focus });
     settings = loadSettings();
     renderSettings();
     wireSettings();

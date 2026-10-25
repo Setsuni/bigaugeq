@@ -14,7 +14,7 @@
         <div class="intro">
             <p>Load your inventory and BIS Aug checks every aug socket on the gear you're wearing:</p>
             <ul>
-                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own. Weapon sockets rank by weapon damage.</li>
+                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) and each focus effect (spell damage, haste, mana cost and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own. Weapon sockets rank by weapon damage.</li>
                 <li><strong>Respects lore</strong>: a lore aug is only used once, and it tells you when moving an aug you already wear to another slot is worth more.</li>
                 <li><strong>Tells you what to farm</strong>: upgrades you already own in your bags or bank first, then the ones to go get, with links showing where each one drops.</li>
                 <li><strong>Lists your spell augs</strong> (type 3): the highest spell in each line at your level, and which augs you have or are missing.</li>
@@ -50,6 +50,8 @@
                     <span class="muted">Weapon sockets rank by weapon damage.</span>
                 </div>
                 <div class="weights" id="weights"></div>
+                <p class="muted">Focus weights: points per 1% of a focus effect. A focus only counts once per type, only when it beats the focus your gear already gives, and less when its level limit is below yours.</p>
+                <div class="weights" id="focusWeights"></div>
             </details>
         </section>
 
@@ -77,6 +79,7 @@
         Item data from <a href="https://items.sodeq.org/" target="_blank" rel="noopener">EQItems</a>.
         Aug links open <a href="https://everquest.allakhazam.com/" target="_blank" rel="noopener">Allakhazam</a>.
         Not affiliated with Daybreak Game Company.
+        <br>Aug in the wrong expansion or event? <a href="https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml" target="_blank" rel="noopener">Report it</a> (free GitHub account needed).
     </footer>
 
     <div id="tooltip" class="tooltip" hidden></div>

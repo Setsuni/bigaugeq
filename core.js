@@ -24,15 +24,24 @@ export const STATS = [
     ['hint', 'HInt'], ['hcha', 'HCha'], ['cv', 'Clairvoyance'], ['heal', 'Heal Amt'], ['sd', 'Spell Dmg'],
 ];
 
+// Focus effects scored per 1% (ranged foci count at their average roll)
+export const FOCUS_TYPES = [
+    ['dmg', 'Spell dmg %'], ['heal', 'Healing %'], ['haste', 'Spell haste %'],
+    ['mana', 'Mana cost %'], ['dur', 'Duration %'], ['range', 'Range %'],
+];
+
 // Starting points by role; shieldAc replaces the AC weight in shield sockets.
 export const PRESETS = [
-    { name: 'Tank', classes: ['WAR', 'PAL', 'SHD'], shieldAc: 15, weights: { ac: 10, hp: 1, hsta: 10 } },
+    { name: 'Tank', classes: ['WAR', 'PAL', 'SHD'], shieldAc: 15, weights: { ac: 10, hp: 1, hsta: 10 },
+        focusWeights: { dmg: 6, haste: 6, mana: 4, dur: 2 } },
     { name: 'Melee DPS', classes: ['MNK', 'ROG', 'BER', 'RNG', 'BST', 'BRD'], shieldAc: 2,
-        weights: { hp: 1, ac: 2, atk: 3, hstr: 5, hdex: 5, hagi: 3, hsta: 5 } },
+        weights: { hp: 1, ac: 2, atk: 3, hstr: 5, hdex: 5, hagi: 3, hsta: 5 }, focusWeights: {} },
     { name: 'Caster', classes: ['WIZ', 'MAG', 'NEC', 'ENC'], shieldAc: 0,
-        weights: { hp: 1, mana: 1, hint: 10, hsta: 5, sd: 3, cv: 3 } },
+        weights: { hp: 1, mana: 1, hint: 10, hsta: 5, sd: 3, cv: 3 },
+        focusWeights: { dmg: 20, haste: 15, mana: 10, dur: 5, range: 2 } },
     { name: 'Healer', classes: ['CLR', 'DRU', 'SHM'], shieldAc: 5,
-        weights: { hp: 1, mana: 1, hwis: 10, hsta: 5, heal: 3, cv: 3 } },
+        weights: { hp: 1, mana: 1, hwis: 10, hsta: 5, heal: 3, cv: 3 },
+        focusWeights: { heal: 20, haste: 15, mana: 10, dur: 5, range: 2 } },
 ];
 
 // EQ item types: 0 1HS, 1 2HS, 2 1HP, 3 1HB, 4 2HB, 5 bow, 8 shield, 35 2HP, 45 H2H
@@ -134,6 +143,7 @@ export class Optimizer {
         this.hosts = data.hosts;
         this.spells = data.spells;
         this.expansions = data.meta.expansions;
+        this.focus = data.focus || {};
         this.byId = new Map(this.augs.map((aug) => [aug.id, aug]));
         this.expansionByCode = new Map(this.expansions.map((expansion) => [expansion.c, expansion]));
     }
@@ -176,7 +186,8 @@ export class Optimizer {
     }
 
     // Top augs for a mask of slot types, best score first. socket narrows to what fits that socket.
-    rank(typeMask, settings, maxLevel, socket, limit = OPTION_LIMIT) {
+    // focusBonus(aug), when given, adds focus value to the ranking; rows keep it apart as `bonus`.
+    rank(typeMask, settings, maxLevel, socket, limit = OPTION_LIMIT, focusBonus = null) {
         const weights = this.weightsFor(socket?.profile, settings);
         const tiebreakWeights = this.weightsFor(null, settings);
         const rows = [];
@@ -184,11 +195,39 @@ export class Optimizer {
             if ((aug.t & typeMask) === 0) continue;
             if (socket && (!hasBit(aug.sl, socket.slot) || !gearFits(aug.r, socket))) continue;
             const score = Optimizer.score(aug, weights);
-            if (score <= 0 || !this.passesFilters(aug, settings, maxLevel)) continue;
-            rows.push({ aug, score, tiebreak: Optimizer.score(aug, tiebreakWeights) });
+            const bonus = focusBonus ? focusBonus(aug) : 0;
+            if (score + bonus <= 0 || !this.passesFilters(aug, settings, maxLevel)) continue;
+            rows.push({ aug, score, bonus, tiebreak: Optimizer.score(aug, tiebreakWeights) });
         }
-        rows.sort((a, b) => b.score - a.score || b.tiebreak - a.tiebreak || a.aug.n.localeCompare(b.aug.n));
+        rows.sort((a, b) => b.score + b.bonus - a.score - a.bonus || b.tiebreak - a.tiebreak || a.aug.n.localeCompare(b.aug.n));
         return rows.slice(0, limit);
+    }
+
+    // A focus only works on spells up to its level limit: full value near your level, half a bit below, none further down.
+    static levelFactor(limit, level) {
+        if (!limit || limit >= level - 5) return 1;
+        return limit >= level - 10 ? 0.5 : 0;
+    }
+
+    // Best focus of each type your worn gear (not augs) already gives. Same-type foci don't stack.
+    gearFocus(inventory, level) {
+        const best = {};
+        for (const item of inventory.worn) {
+            const focus = this.focus[item.itemId];
+            if (!focus) continue;
+            const [type, value, limit] = focus;
+            best[type] = Math.max(best[type] || 0, value * Optimizer.levelFactor(limit, level));
+        }
+        return best;
+    }
+
+    // Points an aug's focus adds on top of what your gear gives.
+    static focusBonus(aug, settings, gearBest) {
+        if (!aug.fo) return 0;
+        const [type, value, limit] = aug.fo;
+        const weight = settings.focusWeights?.[type] || 0;
+        const useful = value * Optimizer.levelFactor(limit, settings.level) - (gearBest[type] || 0);
+        return useful > 0 ? Math.round(useful * weight) : 0;
     }
 
     sockets(inventory) {
@@ -214,8 +253,71 @@ export class Optimizer {
         return sockets.sort((a, b) => order(a) - order(b) || a.augType - b.augType);
     }
 
-    // Each socket can take its best non-lore option freely. Lore keys can be used once across all sockets,
-    // so deciding which socket gets each lore aug is an assignment problem.
+    // An option's "only once" key: its lore group, else its focus type when it is counting its focus.
+    static optionKey(option) {
+        return option.aug.k || (option.focusBonus ? `F${option.focusType}` : null);
+    }
+
+    // Options for a socket. A focus aug appears twice: with its focus value (which can count only once
+    // across all sockets) and as a plain stat stick. noFocus lists augs whose focus is already counted elsewhere.
+    socketOptions(socket, settings, gearBest, noFocus) {
+        const weights = this.weightsFor(socket.profile, settings);
+        const bonusFor = (aug) => (socket.profile === 'weapon' || noFocus.has(aug.id) ? 0 : Optimizer.focusBonus(aug, settings, gearBest));
+        const variants = (row) => {
+            const list = row.score > 0 ? [{ aug: row.aug, score: row.score }] : [];
+            if (row.bonus > 0) list.push({ aug: row.aug, score: row.score + row.bonus, focusBonus: row.bonus, focusType: row.aug.fo[0] });
+            return list;
+        };
+        const options = this.rank(2 ** (socket.augType - 1), settings, settings.level, socket, OPTION_LIMIT, bonusFor).flatMap(variants);
+        if (socket.currentId) {
+            const aug = this.byId.get(socket.currentId) || { id: socket.currentId, n: socket.currentName, s: {} };
+            const current = { aug, score: Optimizer.score(aug, weights), bonus: bonusFor(aug) };
+            const mine = options.filter((option) => option.aug.id === socket.currentId);
+            if (!mine.length) mine.push(...variants(current));
+            if (!mine.length) mine.push({ aug, score: 0 });
+            for (const option of mine) {
+                option.isCurrent = true;
+                if (!options.includes(option)) options.push(option);
+            }
+            // What the slot gives you now, focus included
+            socket.current = mine.reduce((best, option) => (option.score > best.score ? option : best));
+        }
+        // On a tie the aug already in the socket wins, so no pointless swaps
+        return options.sort((a, b) => b.score - a.score || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)));
+    }
+
+    // Each socket can take its best option without an "only once" key freely. Lore groups and counted focus
+    // types can be used once across all sockets, so deciding which socket gets each is an assignment problem.
+    assign(targets, settings, gearBest, noFocus) {
+        const keys = [];
+        const keyIndex = new Map();
+        const gain = [];
+        targets.forEach((socket, index) => {
+            socket.options = this.socketOptions(socket, settings, gearBest, noFocus);
+            socket.base = socket.options.find((option) => !Optimizer.optionKey(option)) || null;
+            socket.bestByKey = new Map();
+            for (const option of socket.options) {
+                const key = Optimizer.optionKey(option);
+                if (key && !socket.bestByKey.has(key)) socket.bestByKey.set(key, option);
+            }
+            const baseScore = socket.base?.score || 0;
+            gain[index] = new Map();
+            for (const [key, option] of socket.bestByKey) {
+                if (option.score <= baseScore) continue;
+                if (!keyIndex.has(key)) {
+                    keys.push(key);
+                    keyIndex.set(key, keys.length);
+                }
+                gain[index].set(keyIndex.get(key), option.score - baseScore);
+            }
+        });
+        const match = maxWeightMatching(targets.length, keys.length, gain);
+        targets.forEach((socket, index) => {
+            const column = match.get(index);
+            socket.choice = (column ? socket.bestByKey.get(keys[column - 1]) : socket.base) || null;
+        });
+    }
+
     optimize(inventory, baseSettings) {
         const ownedIds = new Set(inventory.owned.keys());
         for (const item of inventory.worn) for (const aug of item.augs) if (aug.id) ownedIds.add(aug.id);
@@ -224,52 +326,48 @@ export class Optimizer {
         const targets = all.filter((socket) => socket.augType !== SPELL_AUG_TYPE);
         const wornIn = new Map();
         for (const socket of targets) if (socket.currentId) wornIn.set(socket.currentId, socket.slotName);
+        const gearBest = this.gearFocus(inventory, settings.level);
 
-        const loreKeys = [];
-        const keyIndex = new Map();
-        const gain = [];
-        targets.forEach((socket, index) => {
-            const weights = this.weightsFor(socket.profile, settings);
-            socket.options = this.rank(2 ** (socket.augType - 1), settings, settings.level, socket);
-            if (socket.currentId) {
-                const known = this.byId.get(socket.currentId);
-                const aug = known || { id: socket.currentId, n: socket.currentName, s: {} };
-                socket.current = { aug, score: Optimizer.score(aug, weights), isCurrent: true };
-                const listed = socket.options.find((option) => option.aug.id === socket.currentId);
-                if (listed) listed.isCurrent = true;
-                else socket.options.push(socket.current);
-                // On a tie the aug already in the socket wins, so no pointless swaps
-                socket.options.sort((a, b) => b.score - a.score || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)));
+        // A lore aug's key is its lore group, so two different lore augs could each count the same focus
+        // type. When that happens, keep the stronger focus and re-run without the others' focus.
+        const noFocus = new Set();
+        for (let pass = 0; pass < 5; pass++) {
+            this.assign(targets, settings, gearBest, noFocus);
+            const byType = new Map();
+            for (const socket of targets) {
+                const choice = socket.choice;
+                if (!choice?.focusBonus) continue;
+                const list = byType.get(choice.focusType) || [];
+                list.push(choice);
+                byType.set(choice.focusType, list);
             }
-            socket.base = socket.options.find((option) => !option.aug.k) || null;
-            socket.bestByKey = new Map();
-            for (const option of socket.options) {
-                if (option.aug.k && !socket.bestByKey.has(option.aug.k)) socket.bestByKey.set(option.aug.k, option);
+            let repeated = false;
+            for (const list of byType.values()) {
+                if (list.length < 2) continue;
+                list.sort((a, b) => b.focusBonus - a.focusBonus);
+                for (const extra of list.slice(1)) noFocus.add(extra.aug.id);
+                repeated = true;
             }
-            const baseScore = socket.base?.score || 0;
-            gain[index] = new Map();
-            for (const [key, option] of socket.bestByKey) {
-                if (option.score <= baseScore) continue;
-                if (!keyIndex.has(key)) {
-                    loreKeys.push(key);
-                    keyIndex.set(key, loreKeys.length);
-                }
-                gain[index].set(keyIndex.get(key), option.score - baseScore);
-            }
-        });
+            if (!repeated) break;
+        }
 
-        const match = maxWeightMatching(targets.length, loreKeys.length, gain);
         const usedBy = new Map();
-        targets.forEach((socket, index) => {
-            const column = match.get(index);
-            const choice = column ? socket.bestByKey.get(loreKeys[column - 1]) : socket.base;
-            socket.choice = choice || null;
-            if (!choice) return;
-            if (choice.aug.k) usedBy.set(choice.aug.k, socket.slotName);
+        for (const socket of targets) {
+            const choice = socket.choice;
+            if (!choice) continue;
+            const key = Optimizer.optionKey(choice);
+            if (key) usedBy.set(key, socket.slotName);
             // A lore aug you already wear elsewhere gets moved, not farmed
             if (!choice.isCurrent && choice.aug.k) choice.movedFrom = wornIn.get(choice.aug.id);
             if (!choice.isCurrent && !choice.movedFrom) choice.owned = inventory.owned.get(choice.aug.id) || null;
-        });
+        }
+        // The slot giving up a moved aug shows where it went; its own loss is paid back there
+        const socketByCurrent = new Map(targets.filter((socket) => socket.currentId).map((socket) => [socket.currentId, socket]));
+        for (const socket of targets) {
+            if (!socket.choice?.movedFrom) continue;
+            const source = socketByCurrent.get(socket.choice.aug.id);
+            if (source) source.movedTo = socket.slotName;
+        }
         for (const socket of targets) socket.usedBy = usedBy;
         return {
             sockets: targets,

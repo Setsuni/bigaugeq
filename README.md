@@ -21,7 +21,7 @@ Stat weights come from role presets (Tank, Melee DPS, Caster, Healer) and can be
 
 ## Expansions
 
-Augs are grouped by level-cap era unless their expansion is known. Event rewards (anniversary, seasonal) are hidden unless you include them.
+Augs are grouped by level-cap era unless their expansion is known. Event rewards (anniversary, seasonal) are hidden unless you include them. If an aug shows the wrong expansion or event, use the **report** link next to it or [open a correction](https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml); fixes are reviewed before they go live.
 
 ## License
 

@@ -1,0 +1,46 @@
+name: Wrong expansion or event
+description: An aug shows the wrong expansion, era or event.
+title: "Expansion fix: "
+labels: ["expansion fix"]
+body:
+  - type: input
+    id: aug
+    attributes:
+      label: Aug name
+    validations:
+      required: true
+  - type: input
+    id: item_id
+    attributes:
+      label: Item ID
+      description: Filled in when you use the report link on the site.
+  - type: input
+    id: current
+    attributes:
+      label: What the site shows
+      placeholder: "85 (SoD, UF)"
+  - type: dropdown
+    id: kind
+    attributes:
+      label: It is actually from
+      options:
+        - An expansion
+        - An anniversary or Living Legacy event
+        - A seasonal or holiday event
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: correct
+    attributes:
+      label: Which one
+      placeholder: "Veil of Alaris / 11th Anniversary / Frostfell"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How do you know?
+      description: Where it drops or is sold, a link, or anything that helps confirm it.
+    validations:
+      required: true

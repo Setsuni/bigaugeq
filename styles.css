@@ -94,6 +94,8 @@ th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--bord
 th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
 tr.alt td { background: var(--panel-2); font-size: 13px; }
 td.num, th.num { text-align: right; }
+.fx { color: var(--muted); font-size: 12px; }
+a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
 .toggle { background: none; border: none; color: var(--muted); padding: 0 4px; width: 1.6em; }
 h3 { margin: 14px 0 6px; font-size: 15px; }
 .summary { margin: 0 0 8px; }
