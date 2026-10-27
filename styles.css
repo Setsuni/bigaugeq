@@ -107,6 +107,15 @@ button.ignore:hover { color: var(--bad); border-color: var(--bad); }
 ul.ignored { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
 ul.ignored li { display: flex; align-items: center; gap: 10px; }
 
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.chip { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.chip.ok { border-color: var(--good); }
+.badge {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; margin-left: 4px;
+    padding: 0 5px; border-radius: 10px; background: var(--warn); color: var(--bg); font-size: 12px; font-weight: 600;
+}
+.badge[hidden] { display: none; }
+
 .empty { text-align: center; padding: 24px 12px; }
 .empty p { margin: 4px 0; }
 

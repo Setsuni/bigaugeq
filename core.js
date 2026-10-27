@@ -34,9 +34,9 @@ export function classSympathetic(code) {
 
 // Starting points by role; shieldAc replaces the AC weight in shield sockets.
 export const PRESETS = [
-    { name: 'Tank', classes: ['WAR', 'PAL', 'SHD'], shieldAc: 15, weights: { ac: 10, hp: 1, hsta: 10 } },
+    { name: 'Tank', classes: ['WAR', 'PAL', 'SHD'], shieldAc: 15, weights: { ac: 10, hp: 1, hsta: 10, hdex: 5, hagi: 3 } },
     { name: 'Melee DPS', classes: ['MNK', 'ROG', 'BER', 'RNG', 'BST', 'BRD'], shieldAc: 2,
-        weights: { hp: 1, ac: 2, atk: 3, hstr: 5, hdex: 5, hagi: 3, hsta: 5 } },
+        weights: { hp: 1, ac: 2, atk: 3, hstr: 5, hdex: 10, hagi: 3, hsta: 5 } },
     { name: 'Caster', classes: ['WIZ', 'MAG', 'NEC', 'ENC'], shieldAc: 0,
         weights: { hp: 1, mana: 1, hint: 10, hsta: 5, sd: 3, cv: 3 } },
     { name: 'Healer', classes: ['CLR', 'DRU', 'SHM'], shieldAc: 5,
@@ -71,6 +71,10 @@ export const RESTRICTIONS = {
 };
 
 export const SPELL_AUG_TYPE = 3;
+// Type 14 augs carry only purity; they belong in the visible armor slots
+export const PURITY_AUG_TYPE = 14;
+export const PURITY_TARGET = 25;
+const VISIBLE_SLOTS = new Set([2, 7, 9, 10, 12, 17, 18, 19]);
 export const ALL_ERAS = -1;
 const OPTION_LIMIT = 40;
 
@@ -284,7 +288,7 @@ export class Optimizer {
         for (const item of inventory.worn) for (const aug of item.augs) if (aug.id) ownedIds.add(aug.id);
         const settings = { ...baseSettings, ownedIds };
         const all = this.sockets(inventory);
-        const targets = all.filter((socket) => socket.augType !== SPELL_AUG_TYPE);
+        const targets = all.filter((socket) => socket.augType !== SPELL_AUG_TYPE && socket.augType !== PURITY_AUG_TYPE);
         const wornIn = new Map();
         for (const socket of targets) if (socket.currentId) wornIn.set(socket.currentId, socket.slotName);
         this.assign(targets, settings);
@@ -360,6 +364,46 @@ export class Optimizer {
             .map((socket) => ({ ...fillStep(socket), distillers: socket.current ? 1 : 0 }))
             .sort((a, b) => b.gain - a.gain);
         return { chains, simple };
+    }
+
+    // Type 14 sockets on visible armor and what to put in each to reach PURITY_TARGET. Spare purity augs in
+    // bags or bank go to the emptiest slots first; otherwise the best one you could get is named.
+    purityPlan(inventory, settings) {
+        const ownedIds = new Set(inventory.owned.keys());
+        const rows = this.sockets(inventory)
+            .filter((socket) => socket.augType === PURITY_AUG_TYPE && VISIBLE_SLOTS.has(socket.slot))
+            .map((socket) => {
+                const aug = socket.currentId ? this.byId.get(socket.currentId) || { id: socket.currentId, n: socket.currentName } : null;
+                return { socket, aug, purity: aug?.pu || 0 };
+            });
+        // Visible armor without a type 14 socket can't hold purity at all
+        const withSocket = new Set(rows.map((row) => row.socket.slot));
+        const noSocket = inventory.worn.filter((item) => VISIBLE_SLOTS.has(item.slot) && !withSocket.has(item.slot))
+            .map((item) => ({ socket: { slot: item.slot, slotName: WORN_SLOTS[item.slot], itemName: item.itemName }, noSocket: true }));
+        const fits = (aug, socket) => aug.t & (1 << (PURITY_AUG_TYPE - 1)) && hasBit(aug.sl, socket.slot) && gearFits(aug.r, socket);
+        const spare = [];
+        for (const [id, entries] of inventory.owned) {
+            const aug = this.byId.get(id);
+            if (!aug?.pu) continue;
+            const count = entries.reduce((total, entry) => total + entry.count, 0);
+            for (let n = 0; n < count; n++) spare.push({ aug, where: entries[0].where });
+        }
+        spare.sort((a, b) => b.aug.pu - a.aug.pu);
+        const order = [...rows].sort((a, b) => a.purity - b.purity);
+        for (const row of order) {
+            if (row.purity >= PURITY_TARGET) continue;
+            const index = spare.findIndex((item) => item.aug.pu > row.purity && fits(item.aug, row.socket) && item.aug.l <= settings.level);
+            if (index >= 0) {
+                row.fix = { ...spare[index], owned: true };
+                spare.splice(index, 1);
+                continue;
+            }
+            const best = this.augs.filter((aug) => aug.pu > row.purity && fits(aug, row.socket)
+                    && this.passesFilters(aug, { ...settings, ownedIds }, settings.level))
+                .sort((a, b) => b.pu - a.pu || b.l - a.l)[0];
+            if (best) row.fix = { aug: best, owned: false };
+        }
+        return [...order, ...noSocket];
     }
 
     // Best aug for a two-handed weapon you might swap to. It replaces the primary and secondary, so only

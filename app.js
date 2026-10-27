@@ -1,5 +1,5 @@
 import {
-    ALL_ERAS, CLASSES, Optimizer, PRESETS, STATS, SYMPATHETIC_KINDS, classList, classPreset, classSympathetic, parseInventory,
+    ALL_ERAS, CLASSES, Optimizer, PRESETS, PURITY_TARGET, STATS, SYMPATHETIC_KINDS, classList, classPreset, classSympathetic, parseInventory,
     restrictionLabel, typesFromMask,
 } from './core.js';
 
@@ -49,13 +49,19 @@ function presetValues(preset) {
     };
 }
 
+// Named presets follow their current weights; only Custom keeps the user's own
+function withCurrentPreset(loaded) {
+    const preset = PRESETS.find((p) => p.name === loaded.preset);
+    return preset ? Object.assign(loaded, presetValues(preset)) : loaded;
+}
+
 function loadSettings() {
     const saved = JSON.parse(storageGet(SETTINGS_KEY) || 'null');
     const loaded = { ...defaultSettings(), ...(saved || {}) };
     if (saved && saved.sympathetic === undefined) Object.assign(loaded, classSympathetic(loaded.classCode));
     // Settings saved before the class banner existed count as confirmed
     if (saved && saved.confirmed === undefined) loaded.confirmed = true;
-    return loaded;
+    return withCurrentPreset(loaded);
 }
 
 function saveSettings() {
@@ -393,6 +399,47 @@ function spellsTab() {
         <table><thead><tr><th class="num">Level</th><th>Spell</th><th>Expansion</th><th>Aug</th><th>Effect</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// ---------- purity tab ----------
+
+function purityRows() {
+    return result ? optimizer.purityPlan(inventory, runSettings()) : [];
+}
+
+function purityTab() {
+    if (!result) return '<p class="muted">Load your inventory file first.</p>';
+    const rows = purityRows();
+    if (!rows.length) return '<p class="muted">None of your visible armor has a type 14 socket.</p>';
+    const sockets = rows.filter((row) => !row.noSocket);
+    const done = sockets.filter((row) => row.purity >= PURITY_TARGET).length;
+    const empty = sockets.filter((row) => !row.aug).length;
+    const fromBags = sockets.filter((row) => row.fix?.owned);
+    const chip = (count, label, css) => `<span class="chip"><strong class="${css}">${count}</strong> ${label}</span>`;
+    const bagNote = fromBags.length
+        ? `<span class="chip ok">You have ${fromBags.length} purity ${PURITY_TARGET}+ aug${fromBags.length === 1 ? '' : 's'} in your bags or bank to fix ${fromBags.length === sockets.length - done ? 'all of them' : 'some of them'}.</span>` : '';
+    const body = rows.map((row) => {
+        const slot = `<strong>${escapeHtml(row.socket.slotName)}</strong><div class="sub">${escapeHtml(row.socket.itemName)}</div>`;
+        if (row.noSocket) return `<tr><td>${slot}</td><td class="muted">No type 14 socket</td><td class="num muted">-</td><td class="muted">-</td></tr>`;
+        const css = row.purity >= PURITY_TARGET ? 'good' : row.aug ? 'warn' : 'bad';
+        const now = row.aug ? augLink(row.aug) : `<span class="bad">Empty</span>`;
+        let todo = '<span class="good">Done</span>';
+        if (row.fix) {
+            const where = row.fix.owned ? ` <span class="muted">(in ${escapeHtml(row.fix.where.toLowerCase())})</span>` : ignoreButton(row.fix.aug);
+            todo = `${row.aug ? 'Swap for' : 'Equip'} ${augLink(row.fix.aug)}${where}`;
+        } else if (row.purity < PURITY_TARGET) todo = '<span class="muted">Nothing better at your level</span>';
+        return `<tr><td>${slot}</td><td>${now}</td><td class="num ${css}">${row.purity}</td><td class="wrap">${todo}</td></tr>`;
+    }).join('');
+    return `<p class="summary">Type 14 sockets on your head, chest, arms, wrists, hands, legs and feet. Each should hold a purity ${PURITY_TARGET} aug.</p>
+        <div class="chips">${chip(done, `at purity ${PURITY_TARGET}`, 'good')}${chip(sockets.length - done - empty, `below ${PURITY_TARGET}`, 'warn')}${chip(empty, 'empty', 'bad')}${bagNote}</div>
+        <table><thead><tr><th scope="col">Slot</th><th scope="col">In the type 14 socket</th><th scope="col" class="num">Purity</th><th scope="col">To do</th></tr></thead>
+        <tbody>${body}</tbody></table>`;
+}
+
+function renderPurityBadge() {
+    const missing = purityRows().filter((row) => !row.noSocket && row.purity < PURITY_TARGET).length;
+    $('purityBadge').textContent = missing ? String(missing) : '';
+    $('purityBadge').hidden = !missing;
+}
+
 // ---------- search tab ----------
 
 function runSearch() {
@@ -531,7 +578,9 @@ function renderTabs() {
     $('tab-plan').innerHTML = planTab();
     $('tab-farm').innerHTML = farmTab();
     $('tab-spells').innerHTML = spellsTab();
-    for (const id of ['tab-optimizer', 'tab-plan', 'tab-farm', 'tab-spells']) labelCells($(id));
+    $('tab-purity').innerHTML = purityTab();
+    renderPurityBadge();
+    for (const id of ['tab-optimizer', 'tab-plan', 'tab-farm', 'tab-spells', 'tab-purity']) labelCells($(id));
 }
 
 function recompute() {
@@ -560,7 +609,7 @@ function loadInventory(text, name) {
     inventoryName = name;
     characterKey = keyForFile(name);
     const saved = characters[characterKey]?.settings;
-    if (saved) settings = { ...defaultSettings(), ...saved };
+    if (saved) settings = withCurrentPreset({ ...defaultSettings(), ...saved });
     else settings = { ...settings, confirmed: false };
     renderSettings();
     characters[characterKey] = { name, text, settings, at: Date.now() };
