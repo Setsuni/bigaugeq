@@ -1,12 +1,19 @@
 import {
-    ALL_ERAS, CLASSES, FOCUS_TYPES, Optimizer, PRESETS, STATS, classList, classPreset, parseInventory,
+    ALL_ERAS, CLASSES, Optimizer, PRESETS, STATS, SYMPATHETIC_KINDS, classList, classPreset, classSympathetic, parseInventory,
     restrictionLabel, typesFromMask,
 } from './core.js';
 
 const SETTINGS_KEY = 'bisaug.settings';
+// Pre-characters save, migrated once
 const INVENTORY_KEY = 'bisaug.inventory';
+const CHARACTERS_KEY = 'bisaug.characters';
+const CURRENT_KEY = 'bisaug.current';
+const IGNORED_KEY = 'bisaug.ignored';
+const MAX_CHARACTERS = 12;
 const CUSTOM_PRESET = 'Custom';
 const ALTERNATIVES = 5;
+const AUG_TYPE_NAMES = { 3: 'spell', 7: 'general', 8: 'general' };
+const touchScreen = window.matchMedia('(hover: none)').matches;
 
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -15,6 +22,9 @@ let optimizer;
 let settings;
 let inventory = null;
 let inventoryName = '';
+let characterKey = '';
+let characters = {};
+let ignored = new Set();
 let result = null;
 const expanded = new Set();
 
@@ -29,31 +39,121 @@ function storageSet(key, value) {
 function defaultSettings() {
     return {
         classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false,
-        ...presetValues(classPreset('SHD')),
+        ...presetValues(classPreset('SHD')), ...classSympathetic('SHD'),
     };
 }
 
 function presetValues(preset) {
     return {
         preset: preset.name, weights: { ...preset.weights }, shieldAc: preset.shieldAc,
-        focusWeights: { ...(preset.focusWeights || {}) },
     };
 }
 
 function loadSettings() {
     const saved = JSON.parse(storageGet(SETTINGS_KEY) || 'null');
     const loaded = { ...defaultSettings(), ...(saved || {}) };
-    // Settings saved before focus weights existed take them from the class preset
-    if (!saved?.focusWeights) loaded.focusWeights = { ...(classPreset(loaded.classCode).focusWeights || {}) };
+    if (saved && saved.sympathetic === undefined) Object.assign(loaded, classSympathetic(loaded.classCode));
+    // Settings saved before the class banner existed count as confirmed
+    if (saved && saved.confirmed === undefined) loaded.confirmed = true;
     return loaded;
 }
 
 function saveSettings() {
     storageSet(SETTINGS_KEY, JSON.stringify(settings));
+    if (characters[characterKey]) {
+        characters[characterKey].settings = settings;
+        saveCharacters();
+    }
+}
+
+// ---------- characters ----------
+
+const keyForFile = (fileName) => fileName.replace(/(-Inventory)?\.txt$/i, '');
+
+function characterLabel(key) {
+    const [name, server] = key.split('_');
+    return server ? `${name} · ${server}` : name;
+}
+
+function loadCharacters() {
+    characters = JSON.parse(storageGet(CHARACTERS_KEY) || 'null') || {};
+    const old = JSON.parse(storageGet(INVENTORY_KEY) || 'null');
+    if (old?.text && !Object.keys(characters).length) {
+        characters[keyForFile(old.name)] = { name: old.name, text: old.text, settings, at: Date.now() };
+        storageSet(CURRENT_KEY, keyForFile(old.name));
+    }
+}
+
+function saveCharacters() {
+    const keep = Object.entries(characters).sort(([, a], [, b]) => b.at - a.at).slice(0, MAX_CHARACTERS);
+    characters = Object.fromEntries(keep);
+    storageSet(CHARACTERS_KEY, JSON.stringify(characters));
+    storageSet(CURRENT_KEY, characterKey);
+}
+
+function charactersHtml() {
+    const keys = Object.keys(characters).sort((a, b) => characters[b].at - characters[a].at);
+    if (keys.length < 2) return '';
+    const rows = keys.map((key) => {
+        const saved = characters[key].settings || {};
+        const className = CLASSES.find(([code]) => code === saved.classCode)?.[1] || '';
+        const what = [className && `${className} ${saved.level}`, saved.preset].filter(Boolean).join(' · ');
+        const action = key === characterKey ? '<span class="muted">Current</span>'
+            : `<button type="button" data-switch="${escapeHtml(key)}">Switch</button>`;
+        return `<li class="${key === characterKey ? 'current' : ''}"><span class="name"><strong>${escapeHtml(characterLabel(key))}</strong></span>
+            <span class="muted">${escapeHtml(what)}</span>${action}</li>`;
+    }).join('');
+    return `<div class="characters"><h3>Your characters <span class="muted">(settings are remembered for each file)</span></h3><ul>${rows}</ul></div>`;
+}
+
+function renderLoaded(problem) {
+    const loaded = inventory
+        ? `<div class="notice"><p>Loaded <strong>${escapeHtml(inventoryName)}</strong>
+            <span class="muted">· ${inventory.worn.length} worn items, ${inventory.owned.size} other items · kept in this browser only</span></p>
+            <button type="button" id="clearCharacter">Clear</button></div>`
+        : '';
+    $('loaded').innerHTML = (problem ? `<div class="notice bad" role="alert"><p>${problem}</p></div>` : '') + loaded;
+    $('characters').innerHTML = charactersHtml();
+}
+
+function renderBanner() {
+    const show = Boolean(result) && !settings.confirmed;
+    $('classBanner').hidden = !show;
+    if (show) $('bannerCharacter').textContent = `level ${settings.level} ${CLASSES.find(([code]) => code === settings.classCode)[1]}`;
 }
 
 function runSettings() {
-    return { ...settings, classIndex: CLASSES.findIndex(([code]) => code === settings.classCode) };
+    return { ...settings, classIndex: CLASSES.findIndex(([code]) => code === settings.classCode), ignored };
+}
+
+// ---------- ignored augs ----------
+
+const ownsAug = (id) => Boolean(inventory) && (inventory.owned.has(id) || inventory.worn.some((item) => item.augs.some((aug) => aug.id === id)));
+
+// Owned augs are always used, so only ones to farm can be ignored
+function ignoreButton(aug) {
+    if (ownsAug(aug.id)) return '';
+    return `<button type="button" class="ignore" data-ignore="${aug.id}" title="Don't suggest this aug"
+        aria-label="Ignore ${escapeHtml(aug.n)}">Ignore</button>`;
+}
+
+function saveIgnored() {
+    storageSet(IGNORED_KEY, JSON.stringify([...ignored]));
+}
+
+function renderIgnored() {
+    $('ignoredCount').textContent = ignored.size ? `(${ignored.size})` : '';
+    $('ignoredList').innerHTML = [...ignored].map((id) => optimizer.byId.get(id)).filter(Boolean)
+        .sort((a, b) => a.n.localeCompare(b.n))
+        .map((aug) => `<li>${augLink(aug)} <button type="button" data-unignore="${aug.id}">Undo</button></li>`).join('')
+        || '<li class="muted">None yet. Use an Ignore button next to a suggested aug.</li>';
+}
+
+function setIgnored(id, on) {
+    if (on) ignored.add(id); else ignored.delete(id);
+    saveIgnored();
+    renderIgnored();
+    recompute();
 }
 
 // ---------- shared rendering ----------
@@ -61,17 +161,20 @@ function runSettings() {
 function augLink(aug, label) {
     const text = escapeHtml(label ?? aug.n);
     if (!optimizer.byId.has(aug.id)) return `<span>${text}</span>`;
-    // Allakhazam item pages use their own ids, not EQ's, so link to a name search
-    const url = `https://everquest.allakhazam.com/search.html?q=${encodeURIComponent(aug.n)}`;
+    const url = `https://items.eqresource.com/items.php?id=${aug.id}`;
     return `<a class="aug" data-id="${aug.id}" href="${url}" target="_blank" rel="noopener">${text}</a>`;
 }
 
 const REPORT_URL = 'https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml';
 
 // Link to the correction form with this aug filled in.
-function reportLink(aug) {
+function reportHref(aug) {
     const params = new URLSearchParams({ title: `Expansion fix: ${aug.n}`, aug: aug.n, item_id: String(aug.id), current: eraText(aug) });
-    return ` <a class="report" href="${REPORT_URL}&${params}" target="_blank" rel="noopener" title="Report a wrong expansion">report</a>`;
+    return `${REPORT_URL}&${params}`;
+}
+
+function reportLink(aug) {
+    return ` <a class="report" href="${reportHref(aug)}" target="_blank" rel="noopener" title="Report a wrong expansion">report</a>`;
 }
 
 // Focus effect as a small second line under an aug name.
@@ -91,12 +194,31 @@ function eraText(aug) {
 }
 
 const ownedText = (owned) => [...new Set(owned.map((entry) => entry.where))].join(', ');
-const unitFor = (socket) => (socket.profile === 'weapon' ? ' dmg' : '');
+const SYMPATHETIC_UNITS = { dmg: ' proc dmg', heal: ' proc heal', mana: ' proc mana', hate: ' hate cut' };
+const weaponUnit = () => (settings.sympathetic ? SYMPATHETIC_UNITS[settings.sympatheticKind] : ' dmg');
+const unitFor = (socket) => (socket.profile === 'weapon' ? weaponUnit() : '');
+
+function statDelta(aug, current) {
+    const parts = STATS.map(([key, label]) => [label, (aug?.s?.[key] || 0) - (current?.s?.[key] || 0)])
+        .filter(([, change]) => change).slice(0, 4)
+        .map(([label, change]) => `<span class="${change > 0 ? '' : 'bad'}">${change > 0 ? '+' : ''}${change} ${label}</span>`);
+    return parts.length ? `<div class="delta">${parts.join(' · ')}</div>` : '';
+}
+
+function typeLabel(socket) {
+    const name = socket.profile === 'weapon' ? 'weapon' : AUG_TYPE_NAMES[socket.augType];
+    return name ? `${name} (type ${socket.augType})` : `type ${socket.augType}`;
+}
 
 // ---------- optimizer tab ----------
 
 function optimizerTab() {
     if (!result) return '<p class="muted">Load your inventory file to see your aug sockets.</p>';
+    if (!result.sockets.length) {
+        return `<div class="empty"><p><strong>No aug sockets on your worn gear</strong></p>
+            <p class="muted">None of the ${inventory.worn.length} items you're wearing has an aug socket, so there's nothing to optimize yet.</p></div>`;
+    }
+    const withSource = result.sockets.some((socket) => socket.choice?.aug.src);
     let now = 0;
     let best = 0;
     let damage = 0;
@@ -112,50 +234,63 @@ function optimizerTab() {
         if (choice?.isCurrent) optimized = '<span class="muted">Keep current</span>';
         else if (choice) {
             const note = [choice.movedFrom ? `move from ${choice.movedFrom}` : choice.owned ? `in ${ownedText(choice.owned).toLowerCase()}` : '',
-                choice.focusBonus ? `focus +${choice.focusBonus}` : ''].filter(Boolean).join(', ');
-            optimized = augLink(choice.aug) + (note ? ` <span class="muted">(${escapeHtml(note)})</span>` : '') + effectLine(choice.aug);
+                ].filter(Boolean).join(', ');
+            optimized = augLink(choice.aug) + (note ? ` <span class="muted">(${escapeHtml(note)})</span>` : '')
+                + (choice.movedFrom ? '' : ignoreButton(choice.aug)) + effectLine(choice.aug);
         }
         if (socket.movedTo && socket.current) {
             optimized += `<br><span class="muted">your ${escapeHtml(socket.current.aug.n)} moves to ${escapeHtml(socket.movedTo)}</span>`;
         }
-        const gain = choice ? gainHtml(choice.score - (socket.current?.score || 0), unitFor(socket)) : '';
+        let gain = '';
+        if (choice) {
+            gain = gainHtml(choice.score - (socket.current?.score || 0), unitFor(socket));
+            if (!choice.isCurrent && socket.profile !== 'weapon') gain += statDelta(choice.aug, socket.current?.aug);
+        }
         const current = socket.current ? augLink(socket.current.aug) + effectLine(socket.current.aug) : '<span class="warn">Empty</span>';
-        return socketRow(String(index), socket, current, optimized, gain);
+        const source = withSource ? `<td class="wrap">${choice && !choice.isCurrent ? escapeHtml(choice.aug.src || '') : ''}</td>` : null;
+        return socketRow(String(index), socket, current, optimized, gain, source);
     }).join('');
-    return `<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). Weapon damage ${gainHtml(damage)}.
-        <span class="muted">Lore augs are used once. Expand a slot for more options.</span></p>
-        <table><thead><tr><th>Slot</th><th>Current</th><th>Optimized</th><th class="num">Gain</th></tr></thead>
-        <tbody>${rows}${twoHandRow(result.twoHand)}</tbody></table>`;
+    return `<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
+        <span class="muted">Gain is your stat-weight score; the line under it is the actual stat change. Lore augs are used once.
+        Augs you already own are always included, whatever expansion you pick; the expansion only limits augs to go get. Expand a slot for more options.</span></p>
+        <table><thead><tr><th scope="col">Slot</th><th scope="col">Current</th><th scope="col">Optimized</th><th scope="col" class="num">Gain</th>${withSource ? '<th scope="col">Source</th>' : ''}</tr></thead>
+        <tbody>${rows}${twoHandRow(result.twoHand, withSource)}</tbody></table>`;
 }
 
-function socketRow(key, socket, current, optimized, gain) {
+function socketRow(key, socket, current, optimized, gain, source) {
     const open = expanded.has(key);
     const html = `<tr>
-        <td><button type="button" class="toggle" data-socket="${key}">${open ? '&#9662;' : '&#9656;'}</button>
-            <span title="${escapeHtml(socket.itemName)}">${escapeHtml(socket.slotName)}</span> <span class="muted">type ${socket.augType}</span></td>
-        <td>${current}</td><td>${optimized}</td><td class="num">${gain}</td></tr>`;
-    return open ? html + alternativesHtml(socket) : html;
+        <td><button type="button" class="toggle" data-socket="${key}" aria-expanded="${open}"
+            aria-label="${open ? 'Hide' : 'Show'} other options for ${escapeHtml(socket.slotName)}">${open ? '&minus;' : '+'}</button><strong>${escapeHtml(socket.slotName)}</strong>
+            <div class="sub">${escapeHtml(socket.itemName)} · ${typeLabel(socket)}</div></td>
+        <td>${current}</td><td>${optimized}</td><td class="num">${gain}</td>${source ?? ''}</tr>`;
+    return open ? html + alternativesHtml(socket, source != null) : html;
 }
 
 // What-if row: the best aug if you swapped to a two-handed weapon.
-function twoHandRow(socket) {
+function twoHandRow(socket, withSource) {
     const choice = socket.choice;
     const optimized = choice
         ? augLink(choice.aug) + (choice.owned ? ` <span class="muted">(in ${escapeHtml(ownedText(choice.owned).toLowerCase())})</span>` : '')
         : '<span class="muted">-</span>';
+    const source = withSource ? `<td class="wrap">${escapeHtml(choice?.aug.src || '')}</td>` : null;
     return socketRow('twoHand', socket, '<span class="muted">what-if: any two-handed weapon</span>', optimized,
-        choice ? gainHtml(choice.score, ' dmg') : '');
+        choice ? gainHtml(choice.score, weaponUnit()) : '', source);
 }
 
-function alternativesHtml(socket) {
+function alternativesHtml(socket, withSource) {
     const others = socket.options.filter((option) => option !== socket.choice).slice(0, ALTERNATIVES);
-    if (!others.length) return '<tr class="alt"><td></td><td colspan="3" class="muted">No other options under these filters.</td></tr>';
+    const span = withSource ? 4 : 3;
+    if (!others.length) return `<tr class="alt"><td></td><td colspan="${span}" class="muted">No other options under these filters.</td></tr>`;
     return others.map((option, index) => {
         const key = Optimizer.optionKey(option);
         const usedIn = key && socket.usedBy.get(key);
+        const current = socket.whatIf ? null : socket.current?.aug;
         const gain = usedIn ? `<span class="muted">lore, used in ${escapeHtml(usedIn)}</span>`
-            : gainHtml(option.score - (socket.whatIf ? 0 : socket.current?.score || 0), unitFor(socket));
-        return `<tr class="alt"><td class="muted">#${index + 2}</td><td></td><td>${augLink(option.aug)}${effectLine(option.aug)}</td><td class="num">${gain}</td></tr>`;
+            : gainHtml(option.score - (socket.whatIf ? 0 : socket.current?.score || 0), unitFor(socket))
+                + (socket.profile === 'weapon' ? '' : statDelta(option.aug, current));
+        return `<tr class="alt"><td class="muted">#${index + 2}</td><td></td><td>${augLink(option.aug)}${ignoreButton(option.aug)}${effectLine(option.aug)}</td><td class="num">${gain}</td>${withSource
+            ? `<td class="wrap">${escapeHtml(option.aug.src || '')}</td>` : ''}</tr>`;
     }).join('');
 }
 
@@ -167,7 +302,7 @@ const SMALL_CHAIN_GAIN = 20;
 function sourceNote(step) {
     if (!step.aug) return '';
     if (step.owned) return ` <span class="muted">(in ${escapeHtml(ownedText(step.owned).toLowerCase())})</span>`;
-    return ' <span class="warn">(farm)</span>';
+    return ` <span class="warn">(farm${step.aug.src ? `: ${escapeHtml(step.aug.src)}` : ''})</span>${ignoreButton(step.aug)}`;
 }
 
 function stepHtml(step) {
@@ -222,10 +357,10 @@ function farmEntries(owned) {
 
 function farmTable(entries, owned) {
     if (!entries.length) return '<p class="muted">Nothing here.</p>';
-    const rows = entries.map((entry) => `<tr><td>${augLink(entry.aug)}</td><td>${escapeHtml(entry.slots.join(', '))}</td>
+    const rows = entries.map((entry) => `<tr><td>${augLink(entry.aug)}${owned ? '' : ignoreButton(entry.aug)}</td><td>${escapeHtml(entry.slots.join(', '))}</td>
         <td class="num">${gainHtml(entry.gain, entry.unit)}</td><td>${owned ? escapeHtml(ownedText(entry.owned)) : escapeHtml(eraText(entry.aug)) + reportLink(entry.aug)}</td>
-        <td class="muted">${escapeHtml(entry.aug.fx || '')}</td></tr>`).join('');
-    return `<table><thead><tr><th>Aug</th><th>For</th><th class="num">Gain</th><th>${owned ? 'Where' : 'Era'}</th><th>Effect</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <td class="wrap">${escapeHtml(entry.aug.src || '')}</td><td class="muted wrap">${escapeHtml(entry.aug.fx || '')}</td></tr>`).join('');
+    return `<table><thead><tr><th>Aug</th><th>For</th><th class="num">Gain</th><th>${owned ? 'Where' : 'Era'}</th><th>Source</th><th>Effect</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function farmTab() {
@@ -270,6 +405,7 @@ function runSearch() {
         <td>${restrictionLabel(aug.r)}</td><td class="num">${score}</td>
         ${weighted.map(([key]) => `<td class="num">${aug.s?.[key] || 0}</td>`).join('')}
         <td class="muted">${escapeHtml(aug.fx || '')}</td></tr>`).join('')}</tbody></table>`;
+    labelCells($('searchResults'));
 }
 
 // ---------- tooltip ----------
@@ -282,9 +418,13 @@ function tooltipHtml(aug) {
         ${stats.length ? `<div>${stats.join(' &nbsp; ')}</div>` : ''}
         ${aug.sp ? `<div>Boosts: ${escapeHtml(aug.sp)}</div>` : ''}
         ${aug.fx ? `<div>Effect: ${escapeHtml(aug.fx)}</div>` : ''}
+        ${aug.src ? `<div>Source: ${escapeHtml(aug.src)}</div>` : ''}
         <div>Req level ${aug.l} &nbsp; Rec level ${aug.rl} &nbsp; Era ${escapeHtml(eraText(aug))}</div>
         <div>Classes: ${classList(aug.c)}</div>
-        <div class="muted">Click to look it up on Allakhazam</div>`;
+        ${touchScreen
+        ? `<div class="actions"><a href="https://items.eqresource.com/items.php?id=${aug.id}" target="_blank" rel="noopener">Open on EQ Resource</a>
+            <a href="${reportHref(aug)}" target="_blank" rel="noopener">Report</a></div>`
+        : '<div class="muted">Click to look it up on EQ Resource</div>'}`;
 }
 
 function placeNear(element, x, y) {
@@ -294,15 +434,53 @@ function placeNear(element, x, y) {
     element.style.top = `${Math.max(4, Math.min(y + 12, window.innerHeight - height - 4))}px`;
 }
 
+function showTooltip(link, x, y, pinned) {
+    const tooltip = $('tooltip');
+    tooltip.innerHTML = tooltipHtml(optimizer.byId.get(Number(link.dataset.id)));
+    tooltip.classList.toggle('pinned', pinned);
+    tooltip.dataset.id = link.dataset.id;
+    link.setAttribute('aria-describedby', 'tooltip');
+    placeNear(tooltip, x, y);
+}
+
+function hideTooltip() {
+    const tooltip = $('tooltip');
+    tooltip.hidden = true;
+    tooltip.classList.remove('pinned');
+    delete tooltip.dataset.id;
+}
+
 function wireAugEvents() {
     const tooltip = $('tooltip');
     document.addEventListener('mouseover', (event) => {
+        if (tooltip.classList.contains('pinned')) return;
         const link = event.target.closest('a.aug');
-        if (!link) { tooltip.hidden = true; return; }
-        tooltip.innerHTML = tooltipHtml(optimizer.byId.get(Number(link.dataset.id)));
-        placeNear(tooltip, event.clientX, event.clientY);
+        if (!link) { hideTooltip(); return; }
+        showTooltip(link, event.clientX, event.clientY, false);
+    });
+    document.addEventListener('focusin', (event) => {
+        const link = event.target.closest('a.aug');
+        if (!link) { if (!tooltip.contains(event.target)) hideTooltip(); return; }
+        const box = link.getBoundingClientRect();
+        showTooltip(link, box.left, box.bottom, false);
     });
     document.addEventListener('click', (event) => {
+        // Touch: first tap shows details instead of leaving the page
+        const link = event.target.closest('a.aug');
+        if (touchScreen && link) {
+            event.preventDefault();
+            const box = link.getBoundingClientRect();
+            if (tooltip.dataset.id === link.dataset.id && !tooltip.hidden) hideTooltip();
+            else showTooltip(link, box.left, box.bottom, true);
+            return;
+        }
+        if (touchScreen && !tooltip.contains(event.target)) hideTooltip();
+        const ignore = event.target.closest('button[data-ignore], button[data-unignore]');
+        if (ignore) {
+            const on = Boolean(ignore.dataset.ignore);
+            setIgnored(Number(ignore.dataset.ignore || ignore.dataset.unignore), on);
+            return;
+        }
         const toggle = event.target.closest('button.toggle');
         if (toggle) {
             const key = toggle.dataset.socket;
@@ -323,7 +501,8 @@ function renderSettings() {
     fillSelect($('class'), CLASSES.map(([code, name]) => [code, name]), settings.classCode);
     $('level').value = settings.level;
     const caps = [...new Set(optimizer.expansions.filter((e) => !e.ev).map((e) => e.cap))].sort((a, b) => b - a);
-    fillSelect($('era'), [[ALL_ERAS, 'All'], ...caps.map((cap) => [cap, optimizer.eraLabel(cap)]), [0, 'No level req']], settings.eraCap);
+    const eraName = (cap) => `Level ${cap} · ${optimizer.expansions.filter((e) => e.cap === cap && !e.ev).map((e) => e.n).join(' / ')}`;
+    fillSelect($('era'), [[ALL_ERAS, 'All'], ...caps.map((cap) => [cap, eraName(cap)]), [0, 'No level req']], settings.eraCap);
     $('andOlder').checked = settings.andOlder;
     $('myClassOnly').checked = settings.myClassOnly;
     $('includeEvents').checked = settings.includeEvents;
@@ -331,7 +510,18 @@ function renderSettings() {
     $('presetSummary').textContent = `(${settings.preset})`;
     $('shieldAc').value = settings.shieldAc;
     $('weights').innerHTML = STATS.map(([key, label]) => `<label>${label} <input type="number" data-weight="${key}" value="${settings.weights[key] || 0}"></label>`).join('');
-    $('focusWeights').innerHTML = FOCUS_TYPES.map(([key, label]) => `<label>${label} <input type="number" data-focus="${key}" value="${settings.focusWeights[key] || 0}"></label>`).join('');
+    $('sympathetic').checked = settings.sympathetic;
+    fillSelect($('sympatheticKind'), SYMPATHETIC_KINDS, settings.sympatheticKind);
+    $('sympatheticKind').disabled = !settings.sympathetic;
+}
+
+function labelCells(container) {
+    for (const table of container.querySelectorAll('table')) {
+        const labels = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+        for (const row of table.querySelectorAll('tbody tr')) {
+            [...row.cells].forEach((cell, index) => { if (labels[index]) cell.dataset.label = labels[index]; });
+        }
+    }
 }
 
 function renderTabs() {
@@ -339,11 +529,13 @@ function renderTabs() {
     $('tab-plan').innerHTML = planTab();
     $('tab-farm').innerHTML = farmTab();
     $('tab-spells').innerHTML = spellsTab();
+    for (const id of ['tab-optimizer', 'tab-plan', 'tab-farm', 'tab-spells']) labelCells($(id));
 }
 
 function recompute() {
     result = inventory ? optimizer.optimize(inventory, runSettings()) : null;
     renderTabs();
+    renderBanner();
     if ($('searchResults').innerHTML) runSearch();
 }
 
@@ -355,24 +547,48 @@ function changed() {
 }
 
 function loadInventory(text, name) {
-    inventory = parseInventory(text);
+    const parsed = parseInventory(text);
+    if (!parsed.worn.length) {
+        const still = inventory ? ` Your previous file, ${escapeHtml(inventoryName)}, is still loaded.` : '';
+        renderLoaded(`<strong>${escapeHtml(name)} isn't an inventory file.</strong> Look for <code>Name_server-Inventory.txt</code>
+            in your EverQuest folder, made by <code>/outputfile inventory</code>.${still}`);
+        return;
+    }
+    inventory = parsed;
     inventoryName = name;
-    $('loaded').textContent = inventory.worn.length
-        ? `Loaded ${inventoryName}: ${inventory.worn.length} worn items, ${inventory.owned.size} other items.`
-        : `${inventoryName} does not look like an inventory file.`;
-    storageSet(INVENTORY_KEY, JSON.stringify({ name, text }));
+    characterKey = keyForFile(name);
+    const saved = characters[characterKey]?.settings;
+    if (saved) settings = { ...defaultSettings(), ...saved };
+    else settings = { ...settings, confirmed: false };
+    renderSettings();
+    characters[characterKey] = { name, text, settings, at: Date.now() };
+    saveCharacters();
+    saveSettings();
     expanded.clear();
+    renderLoaded();
     recompute();
 }
 
 function readFile(file) {
-    file.text().then((text) => loadInventory(text, file.name));
+    file.text().then((text) => loadInventory(text, file.name))
+        .catch((error) => renderLoaded(`<strong>Couldn't read ${escapeHtml(file.name)}:</strong> ${escapeHtml(error.message)}`));
+}
+
+function clearCharacter() {
+    delete characters[characterKey];
+    characterKey = '';
+    inventory = null;
+    inventoryName = '';
+    saveCharacters();
+    storageSet(INVENTORY_KEY, '');
+    renderLoaded();
+    recompute();
 }
 
 // Any weight edit becomes the user's Custom set, restored whenever Custom is picked again.
 function saveCustom() {
     settings.preset = CUSTOM_PRESET;
-    settings.custom = { weights: { ...settings.weights }, shieldAc: settings.shieldAc, focusWeights: { ...settings.focusWeights } };
+    settings.custom = { weights: { ...settings.weights }, shieldAc: settings.shieldAc };
     $('preset').value = CUSTOM_PRESET;
     $('presetSummary').textContent = `(${CUSTOM_PRESET})`;
     changed();
@@ -381,18 +597,20 @@ function saveCustom() {
 function wireSettings() {
     $('class').addEventListener('change', () => {
         settings.classCode = $('class').value;
-        Object.assign(settings, presetValues(classPreset(settings.classCode)));
+        settings.confirmed = true;
+        Object.assign(settings, presetValues(classPreset(settings.classCode)), classSympathetic(settings.classCode));
         renderSettings();
         changed();
     });
-    $('level').addEventListener('change', () => { settings.level = Number($('level').value) || 1; changed(); });
-    $('era').addEventListener('change', () => { settings.eraCap = Number($('era').value); changed(); });
+    $('level').addEventListener('change', () => { settings.level = Number($('level').value) || 1; settings.confirmed = true; changed(); });
+    $('era').addEventListener('change', () => { settings.eraCap = Number($('era').value); settings.confirmed = true; changed(); });
+    $('bannerOk').addEventListener('click', () => { settings.confirmed = true; saveSettings(); renderBanner(); });
     for (const id of ['andOlder', 'myClassOnly', 'includeEvents']) {
         $(id).addEventListener('change', () => { settings[id] = $(id).checked; changed(); });
     }
     $('preset').addEventListener('change', () => {
         const preset = $('preset').value === CUSTOM_PRESET
-            ? { name: CUSTOM_PRESET, ...(settings.custom || { weights: settings.weights, shieldAc: settings.shieldAc, focusWeights: settings.focusWeights }) }
+            ? { name: CUSTOM_PRESET, ...(settings.custom || { weights: settings.weights, shieldAc: settings.shieldAc }) }
             : PRESETS.find((p) => p.name === $('preset').value);
         Object.assign(settings, presetValues(preset));
         // Custom is the user's own set, so show it for editing
@@ -410,21 +628,42 @@ function wireSettings() {
         settings.weights[key] = Number(event.target.value) || 0;
         saveCustom();
     });
-    $('focusWeights').addEventListener('change', (event) => {
-        const key = event.target.dataset.focus;
-        if (!key) return;
-        settings.focusWeights[key] = Number(event.target.value) || 0;
-        saveCustom();
+    $('sympathetic').addEventListener('change', () => {
+        settings.sympathetic = $('sympathetic').checked;
+        $('sympatheticKind').disabled = !settings.sympathetic;
+        changed();
     });
+    $('sympatheticKind').addEventListener('change', () => { settings.sympatheticKind = $('sympatheticKind').value; changed(); });
     $('searchButton').addEventListener('click', runSearch);
 
-    $('file').addEventListener('change', (event) => event.target.files[0] && readFile(event.target.files[0]));
-    const drop = $('drop');
-    drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('over'); });
-    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-    drop.addEventListener('drop', (event) => {
+    $('file').addEventListener('change', (event) => {
+        if (event.target.files[0]) readFile(event.target.files[0]);
+        event.target.value = '';
+    });
+    $('upload').addEventListener('click', (event) => {
+        if (event.target.id === 'clearCharacter') clearCharacter();
+        const key = event.target.dataset.switch;
+        if (key && characters[key]) loadInventory(characters[key].text, characters[key].name);
+    });
+
+    const overlay = $('dropOverlay');
+    const hasFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+    let dragDepth = 0;
+    document.addEventListener('dragenter', (event) => {
+        if (!hasFiles(event)) return;
+        dragDepth += 1;
+        overlay.hidden = false;
+    });
+    document.addEventListener('dragleave', () => {
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (!dragDepth) overlay.hidden = true;
+    });
+    document.addEventListener('dragover', (event) => { if (hasFiles(event)) event.preventDefault(); });
+    document.addEventListener('drop', (event) => {
+        if (!hasFiles(event)) return;
         event.preventDefault();
-        drop.classList.remove('over');
+        dragDepth = 0;
+        overlay.hidden = true;
         if (event.dataTransfer.files[0]) readFile(event.dataTransfer.files[0]);
     });
 
@@ -438,15 +677,18 @@ function wireSettings() {
 
 async function start() {
     const load = (name) => fetch(`data/${name}.json`).then((response) => response.json());
-    const [meta, augs, hosts, spells, focus] = await Promise.all(['meta', 'augs', 'hosts', 'spells', 'focus'].map(load));
-    optimizer = new Optimizer({ meta, augs, hosts, spells, focus });
+    const [meta, augs, hosts, spells] = await Promise.all(['meta', 'augs', 'hosts', 'spells'].map(load));
+    optimizer = new Optimizer({ meta, augs, hosts, spells });
     settings = loadSettings();
+    try { ignored = new Set(JSON.parse(storageGet(IGNORED_KEY) || '[]')); } catch { ignored = new Set(); }
+    loadCharacters();
     renderSettings();
     wireSettings();
     wireAugEvents();
-    const saved = JSON.parse(storageGet(INVENTORY_KEY) || 'null');
-    if (saved?.text) loadInventory(saved.text, saved.name);
-    else renderTabs();
+    const current = characters[storageGet(CURRENT_KEY)];
+    if (current) loadInventory(current.text, current.name);
+    else { renderLoaded(); renderTabs(); }
+    renderIgnored();
 }
 
 start().catch((error) => {

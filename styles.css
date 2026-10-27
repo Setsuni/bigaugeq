@@ -61,10 +61,61 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
     overflow-x: auto;
 }
 
-.drop { border: 2px dashed var(--border); border-radius: 8px; padding: 10px 14px; }
+.step { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; font-size: 16px; }
+.step-number {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--bg); font-size: 14px;
+}
+main > .step { margin: 18px 0 8px; }
+
+.drop { border: 2px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; }
 .drop.over { border-color: var(--accent); }
 .drop p { margin: 6px 0; }
-.link-button { color: var(--link); cursor: pointer; text-decoration: underline; }
+.file-button {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; margin: 4px 0;
+    border-radius: 6px; background: var(--accent); color: var(--bg); font-weight: 600; cursor: pointer;
+}
+.file-button:focus-within { outline: 2px solid var(--link); outline-offset: 3px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+.notice p { margin: 0; flex: 1; min-width: 240px; }
+.notice.bad { border: 1px solid var(--bad); border-radius: 6px; padding: 10px 12px; }
+.notice button, .banner button, .characters button { min-height: 36px; padding: 0 12px; }
+.characters { margin-top: 12px; }
+.characters h3 { margin: 0 0 6px; }
+.characters ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.characters li {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2);
+}
+.characters li.current { border-color: var(--accent); }
+.characters .name { flex: 1; min-width: 160px; }
+
+.banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px;
+    padding: 10px 14px; border: 1px solid var(--warn); border-radius: 8px; background: var(--panel);
+}
+.banner p { margin: 0; flex: 1; min-width: 240px; }
+.banner strong { color: var(--warn); }
+
+button.ignore {
+    min-width: 24px; min-height: 24px; margin-left: 6px; padding: 0 6px;
+    color: var(--muted); font-size: 12px; vertical-align: baseline;
+}
+button.ignore:hover { color: var(--bad); border-color: var(--bad); }
+ul.ignored { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
+ul.ignored li { display: flex; align-items: center; gap: 10px; }
+
+.empty { text-align: center; padding: 24px 12px; }
+.empty p { margin: 4px 0; }
+
+.drop-overlay {
+    position: fixed; inset: 12px; z-index: 20; display: flex; align-items: center; justify-content: center;
+    border: 3px dashed var(--accent); border-radius: 10px; background: rgb(20 23 28 / 88%); color: var(--accent);
+    font-size: 20px; pointer-events: none;
+}
+.drop-overlay[hidden] { display: none; }
 
 .settings-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 6px 0; }
 label { display: inline-flex; gap: 6px; align-items: center; }
@@ -90,11 +141,23 @@ summary { cursor: pointer; margin: 6px 0; }
 .tabs button.active { background: var(--panel); color: var(--accent); border-color: var(--border); }
 
 table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: break-word; }
 th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
 tr.alt td { background: var(--panel-2); font-size: 13px; }
 td.num, th.num { text-align: right; }
-.fx { color: var(--muted); font-size: 12px; }
+td.num > span:first-child { white-space: nowrap; }
+.fx, .sub { color: var(--muted); font-size: 12px; }
+.delta { font-size: 12px; }
+
+@media (max-width: 760px) {
+    table, tbody, tr, td { display: block; width: 100%; }
+    thead { display: none; }
+    tr { border-bottom: 1px solid var(--border); padding: 6px 0; }
+    td { border: none; padding: 2px 4px; }
+    td:empty { display: none; }
+    td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 12px; }
+    td.num { text-align: left; }
+}
 a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
 .chain { border-left: 3px solid var(--border); padding: 2px 0 2px 12px; margin: 10px 0; }
 .chain h3 { margin: 4px 0; }
@@ -102,8 +165,7 @@ a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
 .chain ol { margin: 0; padding-left: 22px; }
 .chain li { margin: 4px 0; }
 .step-gain { margin-left: 6px; }
-.toggle { background: none; border: none; color: var(--muted); padding: 0 4px; width: 1.6em; }
-h3 { margin: 14px 0 6px; font-size: 15px; }
+.toggle { color: var(--text); padding: 0; width: 28px; height: 28px; margin-right: 6px; vertical-align: middle; }h3 { margin: 14px 0 6px; font-size: 15px; }
 .summary { margin: 0 0 8px; }
 
 .tooltip {
@@ -117,3 +179,19 @@ h3 { margin: 14px 0 6px; font-size: 15px; }
 .tooltip { padding: 8px 10px; max-width: 360px; pointer-events: none; }
 .tooltip .name { color: var(--accent); font-weight: 600; }
 .tooltip div { margin: 2px 0; }
+.tooltip.pinned { pointer-events: auto; max-width: min(360px, calc(100vw - 16px)); }
+.tooltip .actions { display: flex; gap: 8px; margin-top: 8px; }
+.tooltip .actions a {
+    flex: 1; display: flex; align-items: center; justify-content: center; min-height: 44px;
+    border: 1px solid var(--border); border-radius: 6px; text-decoration: none;
+}
+
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+@media (max-width: 600px) {
+    /* 16px stops phones zooming in on focus */
+    input, select, button { font-size: 16px; }
+    .tabs button { min-height: 44px; }
+    .settings-row label:has(select) { width: 100%; }
+    .settings-row select { flex: 1; min-width: 0; }
+}

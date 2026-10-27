@@ -14,52 +14,67 @@
         <div class="intro">
             <p>Load your inventory and BIS Aug checks every aug socket on the gear you're wearing:</p>
             <ul>
-                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) and each focus effect (spell damage, haste, mana cost and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own. Weapon sockets rank by weapon damage.</li>
+                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own. Weapon sockets rank by weapon damage, or for casters and healers by sympathetic procs.</li>
                 <li><strong>Respects lore</strong>: a lore aug is only used once, and it tells you when moving an aug you already wear to another slot is worth more.</li>
                 <li><strong>Tells you what to farm</strong>: upgrades you already own in your bags or bank first, then the ones to go get, with links showing where each one drops.</li>
                 <li><strong>Lists your spell augs</strong> (type 3): the highest spell in each line at your level, and which augs you have or are missing.</li>
             </ul>
-            <p class="muted">Results only include augs your class can use, at or below your level, from the era you pick.</p>
+            <p class="muted">Results only include augs your class can use, at or below your level, from the expansion you pick.</p>
         </div>
     </header>
 
     <main>
         <section class="card" id="upload">
+            <h2 class="step"><span class="step-number">1</span>Load your inventory file</h2>
             <div class="drop" id="drop">
-                <p><strong>Drop your inventory file here</strong> or <label class="link-button">choose a file<input type="file" id="file" accept=".txt" hidden></label></p>
+                <p><strong>Drop your inventory file here</strong></p>
+                <label class="file-button">Choose a file<input type="file" id="file" accept=".txt" class="visually-hidden"></label>
                 <p class="muted">In game, type <code>/outputfile inventory</code>. The file is saved in your EverQuest folder as <code>Name_server-Inventory.txt</code>.</p>
-                <p class="muted">Your file is read in your browser and never uploaded anywhere.</p>
+                <p class="muted">Your file is read in your browser and kept only in this browser. It is never uploaded.</p>
             </div>
-            <p id="loaded" class="muted"></p>
+            <div id="loaded" role="status"></div>
+            <div id="characters"></div>
         </section>
 
         <section class="card">
+            <h2 class="step"><span class="step-number">2</span>Set your character</h2>
             <div class="settings-row">
                 <label>Class <select id="class"></select></label>
                 <label>Level <input type="number" id="level" min="1" max="130"></label>
-                <label>Era <select id="era"></select></label>
+                <label>Expansion <select id="era"></select></label>
                 <label class="check"><input type="checkbox" id="andOlder"> and older</label>
                 <label class="check"><input type="checkbox" id="myClassOnly"> My class only</label>
                 <label class="check"><input type="checkbox" id="includeEvents"> Include event augs</label>
+                <label class="check"><input type="checkbox" id="sympathetic"> Prioritize sympathetic procs (weapons)</label>
+                <label>Proc type <select id="sympatheticKind"></select></label>
             </div>
             <details id="weightsPanel">
                 <summary>Stat weights <span id="presetSummary" class="muted"></span></summary>
                 <div class="settings-row">
                     <label>Preset <select id="preset"></select></label>
                     <label>Shield AC weight <input type="number" id="shieldAc"></label>
-                    <span class="muted">Weapon sockets rank by weapon damage.</span>
+                    <span class="muted">Weapon sockets rank by weapon damage, or by sympathetic procs when that's on.</span>
                 </div>
                 <div class="weights" id="weights"></div>
-                <p class="muted">Focus weights: points per 1% of a focus effect. A focus only counts once per type, only when it beats the focus your gear already gives, and less when its level limit is below yours.</p>
-                <div class="weights" id="focusWeights"></div>
+            </details>
+            <details id="ignoredPanel">
+                <summary>Ignored augs <span id="ignoredCount" class="muted"></span></summary>
+                <p class="muted">Augs you never want suggested, like a bad camp or a quest you won't do. Ones you already own still count. This list is shared by all your characters.</p>
+                <ul id="ignoredList" class="ignored"></ul>
             </details>
         </section>
 
+        <div id="classBanner" class="banner" role="status" hidden>
+            <p>Results below are for a <strong id="bannerCharacter"></strong>. Not your character? Set your class and level in step 2.</p>
+            <button type="button" id="bannerOk">Looks right</button>
+        </div>
+
+        <h2 class="step"><span class="step-number">3</span>Your results</h2>
         <nav class="tabs" id="tabs">
             <button type="button" data-tab="optimizer" class="active">Optimizer</button>
             <button type="button" data-tab="plan">Swap Plan</button>
             <button type="button" data-tab="farm">To Farm</button>
-            <button type="button" data-tab="spells">Type 3</button>
+            <button type="button" data-tab="spells">Spell augs</button>
             <button type="button" data-tab="search">Search</button>
         </nav>
         <section class="card tab" id="tab-optimizer"></section>
@@ -79,12 +94,15 @@
 
     <footer>
         Item data from <a href="https://items.sodeq.org/" target="_blank" rel="noopener">EQItems</a>.
-        Aug links open <a href="https://everquest.allakhazam.com/" target="_blank" rel="noopener">Allakhazam</a>.
+        Expansions and drop and vendor sources from <a href="https://items.eqresource.com/" target="_blank" rel="noopener">EQ Resource</a>,
+        <a href="https://www.raidloot.com/" target="_blank" rel="noopener">raidloot</a> and EQItems.
+        Aug links open EQ Resource.
         Not affiliated with Daybreak Game Company.
         <br>Aug in the wrong expansion or event? <a href="https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml" target="_blank" rel="noopener">Report it</a> (free GitHub account needed).
     </footer>
 
-    <div id="tooltip" class="tooltip" hidden></div>
+    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+    <div id="dropOverlay" class="drop-overlay" hidden><p><strong>Drop to load your inventory</strong></p></div>
     <script type="module" src="app.js"></script>
 </body>
 </html>

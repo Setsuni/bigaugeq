@@ -14,10 +14,10 @@ Your file is read in your browser and is never uploaded.
 
 - **Optimizer**: the best aug for every socket on your worn gear. Lore augs are used only once, and it suggests moving an aug you already wear when another slot gets more out of it. Expand a slot to see the next best options.
 - **To Farm**: upgrades you already own (in bags or bank), then the ones to go get.
-- **Type 3**: spell augs for your class, showing the highest spell in each line at your level and era, and whether you wear, own or are missing each aug.
+- **Spell augs**: type 3 augs for your class, showing the highest spell in each line at your level and era, and whether you wear, own or are missing each aug.
 - **Search**: rank every aug for a slot type by your stat weights.
 
-Stat weights come from role presets (Tank, Melee DPS, Caster, Healer) and can be changed. Weapon sockets rank by weapon damage; shield sockets use their own AC weight.
+Stat weights come from role presets (Tank, Melee DPS, Caster, Healer) and can be changed. Weapon sockets rank by weapon damage, or by a sympathetic proc (damage, healing, mana return or aggro reduction) when that's turned on; it's on by default for casters and healers except Enchanters. Shield sockets use their own AC weight.
 
 ## Expansions
 
@@ -29,4 +29,4 @@ The code is MIT licensed (see [LICENSE](LICENSE)): use it, change it, or host it
 
 ## Credits
 
-Item data from [EQItems](https://items.sodeq.org/). Aug links open [Allakhazam](https://everquest.allakhazam.com/). Not affiliated with Daybreak Game Company.
+Item data from [EQItems](https://items.sodeq.org/). Expansions and drop and vendor sources come from [EQ Resource](https://items.eqresource.com/), [raidloot](https://www.raidloot.com/) and EQItems. Aug links open EQ Resource. Not affiliated with Daybreak Game Company.
