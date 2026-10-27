@@ -246,7 +246,9 @@ function optimizerTab() {
             gain = gainHtml(choice.score - (socket.current?.score || 0), unitFor(socket));
             if (!choice.isCurrent && socket.profile !== 'weapon') gain += statDelta(choice.aug, socket.current?.aug);
         }
-        const current = socket.current ? augLink(socket.current.aug) + effectLine(socket.current.aug) : '<span class="warn">Empty</span>';
+        const unknown = socket.current && !optimizer.byId.has(socket.current.aug.id)
+            ? '<div class="sub warn">Not in our item data, so counted as 0. Gains here may be too high.</div>' : '';
+        const current = socket.current ? augLink(socket.current.aug) + effectLine(socket.current.aug) + unknown : '<span class="warn">Empty</span>';
         const source = withSource ? `<td class="wrap">${choice && !choice.isCurrent ? escapeHtml(choice.aug.src || '') : ''}</td>` : null;
         return socketRow(String(index), socket, current, optimized, gain, source);
     }).join('');
