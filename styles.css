@@ -81,7 +81,7 @@ main > .step { margin: 18px 0 8px; }
 .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
 .notice p { margin: 0; flex: 1; min-width: 240px; }
 .notice.bad { border: 1px solid var(--bad); border-radius: 6px; padding: 10px 12px; }
-.notice button, .banner button, .characters button { min-height: 36px; padding: 0 12px; }
+.notice button, .characters button { min-height: 36px; padding: 0 12px; }
 .characters { margin-top: 12px; }
 .characters h3 { margin: 0 0 6px; }
 .characters ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -91,13 +91,6 @@ main > .step { margin: 18px 0 8px; }
 }
 .characters li.current { border-color: var(--accent); }
 .characters .name { flex: 1; min-width: 160px; }
-
-.banner {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px;
-    padding: 10px 14px; border: 1px solid var(--warn); border-radius: 8px; background: var(--panel);
-}
-.banner p { margin: 0; flex: 1; min-width: 240px; }
-.banner strong { color: var(--warn); }
 
 button.ignore {
     min-width: 24px; min-height: 24px; margin-left: 6px; padding: 0 6px;
@@ -126,6 +119,8 @@ ul.ignored li { display: flex; align-items: center; gap: 10px; }
 }
 .drop-overlay[hidden] { display: none; }
 
+.settings-row select { max-width: 100%; }
+.settings-row label { max-width: 100%; }
 .settings-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 6px 0; }
 label { display: inline-flex; gap: 6px; align-items: center; }
 input, select, button {

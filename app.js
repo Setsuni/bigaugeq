@@ -1,5 +1,5 @@
 import {
-    ALL_ERAS, CLASSES, Optimizer, PRESETS, PURITY_TARGET, STATS, SYMPATHETIC_KINDS, classList, classPreset, classSympathetic, parseInventory,
+    ALL_ERAS, CLASSES, Optimizer, PRESETS, PURITY_TARGET, STATS, SYMPATHETIC_KINDS, classList, classPreset, classBow, classSympathetic, classesFromGear, parseInventory,
     restrictionLabel, typesFromMask,
 } from './core.js';
 
@@ -39,7 +39,7 @@ function storageSet(key, value) {
 function defaultSettings() {
     return {
         classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false,
-        ...presetValues(classPreset('SHD')), ...classSympathetic('SHD'),
+        ...presetValues(classPreset('SHD')), ...classSympathetic('SHD'), ...classBow('SHD'),
     };
 }
 
@@ -59,8 +59,7 @@ function loadSettings() {
     const saved = JSON.parse(storageGet(SETTINGS_KEY) || 'null');
     const loaded = { ...defaultSettings(), ...(saved || {}) };
     if (saved && saved.sympathetic === undefined) Object.assign(loaded, classSympathetic(loaded.classCode));
-    // Settings saved before the class banner existed count as confirmed
-    if (saved && saved.confirmed === undefined) loaded.confirmed = true;
+    if (saved && saved.bowDamage === undefined) Object.assign(loaded, classBow(loaded.classCode));
     return withCurrentPreset(loaded);
 }
 
@@ -122,14 +121,9 @@ function renderLoaded(problem) {
     $('characters').innerHTML = charactersHtml();
 }
 
-function renderBanner() {
-    const show = Boolean(result) && !settings.confirmed;
-    $('classBanner').hidden = !show;
-    if (show) $('bannerCharacter').textContent = `level ${settings.level} ${CLASSES.find(([code]) => code === settings.classCode)[1]}`;
-}
-
+// Suggestions always fit your class; only Search can show other classes' augs
 function runSettings() {
-    return { ...settings, classIndex: CLASSES.findIndex(([code]) => code === settings.classCode), ignored };
+    return { ...settings, myClassOnly: true, classIndex: CLASSES.findIndex(([code]) => code === settings.classCode), ignored };
 }
 
 // ---------- ignored augs ----------
@@ -202,7 +196,8 @@ function eraText(aug) {
 const ownedText = (owned) => [...new Set(owned.map((entry) => entry.where))].join(', ');
 const SYMPATHETIC_UNITS = { dmg: ' proc dmg', heal: ' proc heal', mana: ' proc mana', hate: ' hate cut' };
 const weaponUnit = () => (settings.sympathetic ? SYMPATHETIC_UNITS[settings.sympatheticKind] : ' dmg');
-const unitFor = (socket) => (socket.profile === 'weapon' ? weaponUnit() : '');
+const byDamage = (socket) => socket.profile === 'weapon' || (socket.profile === 'bow' && settings.bowDamage);
+const unitFor = (socket) => (socket.profile === 'weapon' ? weaponUnit() : byDamage(socket) ? ' dmg' : '');
 
 function statDelta(aug, current) {
     const parts = STATS.map(([key, label]) => [label, (aug?.s?.[key] || 0) - (current?.s?.[key] || 0)])
@@ -212,7 +207,7 @@ function statDelta(aug, current) {
 }
 
 function typeLabel(socket) {
-    const name = socket.profile === 'weapon' ? 'weapon' : AUG_TYPE_NAMES[socket.augType];
+    const name = socket.profile === 'weapon' || socket.profile === 'bow' ? socket.profile : AUG_TYPE_NAMES[socket.augType];
     return name ? `${name} (type ${socket.augType})` : `type ${socket.augType}`;
 }
 
@@ -231,7 +226,7 @@ function optimizerTab() {
     for (const socket of result.sockets) {
         const current = socket.current?.score || 0;
         const chosen = socket.choice?.score || 0;
-        if (socket.profile === 'weapon') damage += chosen - current;
+        if (byDamage(socket)) damage += chosen - current;
         else { now += current; best += chosen; }
     }
     const rows = result.sockets.map((socket, index) => {
@@ -250,7 +245,7 @@ function optimizerTab() {
         let gain = '';
         if (choice) {
             gain = gainHtml(choice.score - (socket.current?.score || 0), unitFor(socket));
-            if (!choice.isCurrent && socket.profile !== 'weapon') gain += statDelta(choice.aug, socket.current?.aug);
+            if (!choice.isCurrent && !byDamage(socket)) gain += statDelta(choice.aug, socket.current?.aug);
         }
         const unknown = socket.current && !optimizer.byId.has(socket.current.aug.id)
             ? '<div class="sub warn">Not in our item data, so counted as 0. Gains here may be too high.</div>' : '';
@@ -296,7 +291,7 @@ function alternativesHtml(socket, withSource) {
         const current = socket.whatIf ? null : socket.current?.aug;
         const gain = usedIn ? `<span class="muted">lore, used in ${escapeHtml(usedIn)}</span>`
             : gainHtml(option.score - (socket.whatIf ? 0 : socket.current?.score || 0), unitFor(socket))
-                + (socket.profile === 'weapon' ? '' : statDelta(option.aug, current));
+                + (byDamage(socket) ? '' : statDelta(option.aug, current));
         return `<tr class="alt"><td class="muted">#${index + 2}</td><td></td><td>${augLink(option.aug)}${ignoreButton(option.aug)}${effectLine(option.aug)}</td><td class="num">${gain}</td>${withSource
             ? `<td class="wrap">${escapeHtml(option.aug.src || '')}</td>` : ''}</tr>`;
     }).join('');
@@ -445,7 +440,7 @@ function renderPurityBadge() {
 function runSearch() {
     const mask = $('searchTypes').value.split(/[^0-9]+/).map(Number).filter((type) => type >= 1 && type <= 30)
         .reduce((total, type) => total | (1 << (type - 1)), 0);
-    const rows = mask ? optimizer.rank(mask, runSettings(), Number($('searchLevel').value) || 0, null, 100) : [];
+    const rows = mask ? optimizer.rank(mask, { ...runSettings(), myClassOnly: settings.myClassOnly }, Number($('searchLevel').value) || 0, null, 100) : [];
     const weighted = STATS.filter(([key]) => settings.weights[key]);
     $('searchCount').textContent = `${rows.length} results`;
     $('searchResults').innerHTML = `<table><thead><tr><th>Name</th><th>Era</th><th>Types</th><th>Gear</th><th class="num">Score</th>
@@ -560,6 +555,7 @@ function renderSettings() {
     $('shieldAc').value = settings.shieldAc;
     $('weights').innerHTML = STATS.map(([key, label]) => `<label>${label} <input type="number" data-weight="${key}" value="${settings.weights[key] || 0}"></label>`).join('');
     $('sympathetic').checked = settings.sympathetic;
+    $('bowDamage').checked = settings.bowDamage;
     fillSelect($('sympatheticKind'), SYMPATHETIC_KINDS, settings.sympatheticKind);
     $('sympatheticKind').disabled = !settings.sympathetic;
 }
@@ -586,7 +582,7 @@ function renderTabs() {
 function recompute() {
     result = inventory ? optimizer.optimize(inventory, runSettings()) : null;
     renderTabs();
-    renderBanner();
+    $('characters').innerHTML = charactersHtml();
     if ($('searchResults').innerHTML) runSearch();
 }
 
@@ -610,7 +606,15 @@ function loadInventory(text, name) {
     characterKey = keyForFile(name);
     const saved = characters[characterKey]?.settings;
     if (saved) settings = withCurrentPreset({ ...defaultSettings(), ...saved });
-    else settings = { ...settings, confirmed: false };
+    else {
+        // A new character starts from its gear's class when the gear only fits one
+        const guessed = classesFromGear(parsed, optimizer.hosts);
+        settings = { ...settings };
+        if (guessed.length === 1 && guessed[0] !== settings.classCode) {
+            settings.classCode = guessed[0];
+            Object.assign(settings, presetValues(classPreset(guessed[0])), classSympathetic(guessed[0]), classBow(guessed[0]));
+        }
+    }
     renderSettings();
     characters[characterKey] = { name, text, settings, at: Date.now() };
     saveCharacters();
@@ -648,14 +652,12 @@ function saveCustom() {
 function wireSettings() {
     $('class').addEventListener('change', () => {
         settings.classCode = $('class').value;
-        settings.confirmed = true;
-        Object.assign(settings, presetValues(classPreset(settings.classCode)), classSympathetic(settings.classCode));
+        Object.assign(settings, presetValues(classPreset(settings.classCode)), classSympathetic(settings.classCode), classBow(settings.classCode));
         renderSettings();
         changed();
     });
-    $('level').addEventListener('change', () => { settings.level = Number($('level').value) || 1; settings.confirmed = true; changed(); });
-    $('era').addEventListener('change', () => { settings.eraCap = Number($('era').value); settings.confirmed = true; changed(); });
-    $('bannerOk').addEventListener('click', () => { settings.confirmed = true; saveSettings(); renderBanner(); });
+    $('level').addEventListener('change', () => { settings.level = Number($('level').value) || 1; changed(); });
+    $('era').addEventListener('change', () => { settings.eraCap = Number($('era').value); changed(); });
     for (const id of ['andOlder', 'myClassOnly', 'includeEvents']) {
         $(id).addEventListener('change', () => { settings[id] = $(id).checked; changed(); });
     }
@@ -679,6 +681,7 @@ function wireSettings() {
         settings.weights[key] = Number(event.target.value) || 0;
         saveCustom();
     });
+    $('bowDamage').addEventListener('change', () => { settings.bowDamage = $('bowDamage').checked; changed(); });
     $('sympathetic').addEventListener('change', () => {
         settings.sympathetic = $('sympathetic').checked;
         $('sympatheticKind').disabled = !settings.sympathetic;
@@ -736,6 +739,8 @@ async function start() {
     renderSettings();
     wireSettings();
     wireAugEvents();
+    // Coming back to the page from history: show the saved settings, not whatever the browser kept
+    window.addEventListener('pageshow', (event) => { if (event.persisted) { renderSettings(); recompute(); } });
     const current = characters[storageGet(CURRENT_KEY)];
     if (current) loadInventory(current.text, current.name);
     else { renderLoaded(); renderTabs(); }

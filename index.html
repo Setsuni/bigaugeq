@@ -36,23 +36,23 @@
             <div id="characters"></div>
         </section>
 
-        <section class="card">
+        <section class="card" id="characterSettings">
             <h2 class="step"><span class="step-number">2</span>Set your character</h2>
             <div class="settings-row">
-                <label>Class <select id="class"></select></label>
-                <label>Level <input type="number" id="level" min="1" max="130"></label>
-                <label>Expansion <select id="era"></select></label>
-                <label class="check"><input type="checkbox" id="andOlder"> and older</label>
-                <label class="check"><input type="checkbox" id="myClassOnly"> My class only</label>
-                <label class="check"><input type="checkbox" id="includeEvents"> Include event augs</label>
-                <label class="check"><input type="checkbox" id="sympathetic"> Prioritize sympathetic procs (weapons)</label>
-                <label>Proc type <select id="sympatheticKind"></select></label>
+                <label>Class <select id="class" autocomplete="off"></select></label>
+                <label>Level <input type="number" id="level" autocomplete="off" min="1" max="130"></label>
+                <label>Expansion <select id="era" autocomplete="off"></select></label>
+                <label class="check"><input type="checkbox" id="andOlder" autocomplete="off"> and older</label>
+                <label class="check"><input type="checkbox" id="includeEvents" autocomplete="off"> Include event augs</label>
+                <label class="check"><input type="checkbox" id="sympathetic" autocomplete="off"> Prioritize sympathetic procs (weapons)</label>
+                <label>Proc type <select id="sympatheticKind" autocomplete="off"></select></label>
+                <label class="check"><input type="checkbox" id="bowDamage" autocomplete="off"> Rank bow sockets by weapon damage</label>
             </div>
             <details id="weightsPanel">
                 <summary>Stat weights <span id="presetSummary" class="muted"></span></summary>
                 <div class="settings-row">
-                    <label>Preset <select id="preset"></select></label>
-                    <label>Shield AC weight <input type="number" id="shieldAc"></label>
+                    <label>Preset <select id="preset" autocomplete="off"></select></label>
+                    <label>Shield AC weight <input type="number" id="shieldAc" autocomplete="off"></label>
                     <span class="muted">Weapon sockets rank by weapon damage, or by sympathetic procs when that's on.</span>
                 </div>
                 <div class="weights" id="weights"></div>
@@ -64,10 +64,6 @@
             </details>
         </section>
 
-        <div id="classBanner" class="banner" role="status" hidden>
-            <p>Results below are for a <strong id="bannerCharacter"></strong>. Not your character? Set your class and level in step 2.</p>
-            <button type="button" id="bannerOk">Looks right</button>
-        </div>
 
         <h2 class="step"><span class="step-number">3</span>Your results</h2>
         <nav class="tabs" id="tabs">
@@ -85,8 +81,9 @@
         <section class="card tab" id="tab-purity" hidden></section>
         <section class="card tab" id="tab-search" hidden>
             <div class="settings-row">
-                <label>Aug type <input type="text" id="searchTypes" value="7,8" size="8"></label>
-                <label>Max level <input type="number" id="searchLevel" min="0" max="130" value="0"></label>
+                <label>Aug type <input type="text" id="searchTypes" autocomplete="off" value="7,8" size="8"></label>
+                <label>Max level <input type="number" id="searchLevel" autocomplete="off" min="0" max="130" value="0"></label>
+                <label class="check"><input type="checkbox" id="myClassOnly" autocomplete="off"> My class only</label>
                 <button type="button" id="searchButton">Search</button>
                 <span id="searchCount" class="muted"></span>
             </div>

@@ -28,6 +28,21 @@ export const STATS = [
 export const SYMPATHETIC_KINDS = [['dmg', 'Damage'], ['heal', 'Healing'], ['mana', 'Mana return'], ['hate', 'Aggro reduction']];
 const CLASS_SYMPATHETIC = { WIZ: 'dmg', MAG: 'hate', NEC: 'mana', CLR: 'heal', DRU: 'heal', SHM: 'heal' };
 
+// Rangers shoot their bow, so its sockets rank by damage; for everyone else a bow is a stat slot
+export function classBow(code) {
+    return { bowDamage: code === 'RNG' };
+}
+
+// Classes that can wear everything you have on; worn gear has to be usable by your class
+export function classesFromGear(inventory, hosts) {
+    let mask = ALL_CLASSES;
+    for (const item of inventory.worn) {
+        const classes = hosts[item.itemId]?.[7];
+        if (classes) mask &= classes;
+    }
+    return mask === ALL_CLASSES ? [] : CLASSES.filter((_, index) => hasBit(mask, index)).map(([code]) => code);
+}
+
 export function classSympathetic(code) {
     return { sympathetic: code in CLASS_SYMPATHETIC, sympatheticKind: CLASS_SYMPATHETIC[code] || 'dmg' };
 }
@@ -47,6 +62,7 @@ export const PRESETS = [
 const WEAPON_TYPES = new Set([0, 1, 2, 3, 4, 5, 35, 45]);
 const TWO_HAND_TYPES = [1, 4, 35];
 const SHIELD_TYPE = 8;
+const BOW_TYPE = 5;
 // Two-handed weapons in reach carry a type 8 socket
 const TWO_HAND_AUG_TYPE = 8;
 
@@ -164,6 +180,7 @@ export class Optimizer {
 
     weightsFor(profile, settings) {
         if (profile === 'weapon') return settings.sympathetic ? { sympathetic: settings.sympatheticKind } : { dmg: 1 };
+        if (profile === 'bow' && settings.bowDamage) return { dmg: 1 };
         const weights = { ...settings.weights };
         if (profile === 'shield') weights.ac = settings.shieldAc;
         return weights;
@@ -213,6 +230,7 @@ export class Optimizer {
             const hostType = host ? host[0] : undefined;
             let profile = null;
             if (hostType === SHIELD_TYPE) profile = 'shield';
+            else if (hostType === BOW_TYPE) profile = 'bow';
             else if (WEAPON_TYPES.has(hostType) || (hostType === undefined && item.slot === PRIMARY_SLOT)) profile = 'weapon';
             for (const aug of item.augs) {
                 const augType = host ? host[aug.index] : 0;
