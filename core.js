@@ -286,12 +286,14 @@ export class Optimizer {
             const baseScore = socket.base?.score || 0;
             gain[index] = new Map();
             for (const [key, option] of socket.bestByKey) {
-                if (option.score <= baseScore) continue;
+                // A lore aug already in this socket wins ties, so equal-score swaps don't happen
+                const stay = option.isCurrent ? 0.001 : 0;
+                if (option.score + stay <= baseScore) continue;
                 if (!keyIndex.has(key)) {
                     keys.push(key);
                     keyIndex.set(key, keys.length);
                 }
-                gain[index].set(keyIndex.get(key), option.score - baseScore);
+                gain[index].set(keyIndex.get(key), option.score - baseScore + stay);
             }
         });
         const match = maxWeightMatching(targets.length, keys.length, gain);
