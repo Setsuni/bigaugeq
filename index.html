@@ -14,7 +14,7 @@
         <div class="intro">
             <p>Load your inventory and BIS Aug checks every aug socket on the gear you're wearing:</p>
             <ul>
-                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own, and set caps so stats you've maxed stop counting. Weapon sockets rank by weapon damage, or for casters and healers by sympathetic procs.</li>
+                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. You set the weights, and caps so stats you've maxed stop counting. Weapon sockets rank by weapon damage, or for casters and healers by sympathetic procs.</li>
                 <li><strong>Respects lore</strong>: a lore aug is only used once, and it tells you when moving an aug you already wear to another slot is worth more.</li>
                 <li><strong>Tells you what to farm</strong>: upgrades you already own in your bags or bank first, then the ones to go get, with links showing where each one drops.</li>
                 <li><strong>Lists your spell augs</strong> (type 3): the highest spell in each line at your level, and which augs you have or are missing.</li>
@@ -39,11 +39,17 @@
         <section class="card" id="characterSettings">
             <h2 class="step"><span class="step-number">2</span>Set your character</h2>
             <div class="callout" role="note">
-                <p><strong>Set your stat weights first. The suggestions are only as good as your weights.</strong></p>
-                <p>A weight is an exchange rate. Give the stat you care about most a weight of 1, then give every other stat what one point of it is worth in that stat.
-                    For example, a level 85 Wizard wants mana, and each point of HInt gives about 24 mana, so Mana is 1 and HInt is 24.
-                    A weight of 0 means the stat is ignored.</p>
-                <p>If a stat has a cap, like Mana Regen, enter the cap from your in-game stats window and give the stat a high weight. It counts until you reach the cap, then other stats take over.</p>
+                <p class="callout-title">Fill out your stat weights before trusting any suggestion</p>
+                <p>There are no presets. Until you add stats under <strong>Stat weights</strong>, nothing gets suggested.</p>
+                <p><strong>A weight is an exchange rate.</strong> Pick the stat you care about most and make it worth 1. Every other stat is worth however many of those one point of it gives you.</p>
+                <ul>
+                    <li><strong>Wizard, level 85:</strong> each point of HInt gives about 24 mana, so Mana is worth 1 and HInt is worth 24.</li>
+                    <li><strong>Cleric, level 85:</strong> the same idea with Wisdom. HWis gives Wisdom casters about as much mana as HInt gives a Wizard, so Mana 1 and HWis about 24.</li>
+                    <li><strong>Tank:</strong> make HP worth 1 and HSta worth the HP one point gives you. To find it, swap in an aug with a known amount of HSta and see how much your max HP changes.</li>
+                    <li><strong>Capped stats:</strong> Mana Regen worth 50 with your cap of 103 is chased until you reach 103, then ignored so other stats take over.</li>
+                    <li><strong>Tiebreakers:</strong> add a stat worth 0, like Mana Regen after HInt and Mana. It only decides between augs that otherwise score the same. Lower rows break the ties left over.</li>
+                </ul>
+                <p>The numbers change with level and class, so check yours in game.</p>
             </div>
             <div class="settings-row">
                 <label>Class <select id="class" autocomplete="off"></select></label>
@@ -56,13 +62,12 @@
                 <label class="check"><input type="checkbox" id="bowDamage" autocomplete="off"> Rank bow sockets by weapon damage</label>
             </div>
             <details id="weightsPanel">
-                <summary>Stat weights <span id="presetSummary" class="muted"></span></summary>
+                <summary>Stat weights</summary>
                 <div class="settings-row">
-                    <label>Preset <select id="preset" autocomplete="off"></select></label>
-                    <label>Shield AC weight <input type="number" id="shieldAc" autocomplete="off"></label>
+                    <label>Shield AC weight <input type="number" id="shieldAc" autocomplete="off" placeholder="same"></label>
                     <span class="muted">Weapon sockets rank by weapon damage, or by sympathetic procs when that's on.</span>
                 </div>
-                <p class="muted">Caps are optional and kept for each character. Type the cap from your in-game stats window; points past it are worth nothing, so other stats take over once you reach it.</p>
+                <p class="muted">Add a row for each stat you care about. Stats you don't add are ignored. A stat worth 0 is a tiebreaker. Caps are optional: type the cap from your in-game stats window, and points past it count as 0.</p>
                 <div class="weights" id="weights"></div>
             </details>
             <details id="ignoredPanel">

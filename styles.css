@@ -137,8 +137,22 @@ button:hover { border-color: var(--accent); }
 summary { cursor: pointer; margin: 6px 0; }
 
 .weights { margin: 8px 0; }
-.weights-table { width: auto; }
-.weights-table td { vertical-align: middle; white-space: nowrap; }
+.weight-rows { display: grid; gap: 6px; margin-bottom: 8px; }
+.weight-row {
+    display: grid; grid-template-columns: 22px 250px auto auto minmax(120px, 1fr) 30px; gap: 6px 14px; align-items: center;
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); max-width: 900px;
+}
+.weight-row.empty { border-style: dashed; }
+.weight-row label { white-space: nowrap; }
+.weight-row .status { font-size: 13px; }
+.weight-row .remove { width: 28px; height: 28px; padding: 0; color: var(--muted); }
+.weight-row .remove:hover { color: var(--bad); border-color: var(--bad); }
+.tag { margin-left: 6px; padding: 0 5px; border: 1px solid var(--accent); border-radius: 3px; color: var(--accent); font-size: 11px; }
+.add-stat { border-style: dashed; color: var(--accent); }
+@media (max-width: 700px) {
+    .weight-row { grid-template-columns: 22px 1fr 30px; }
+    .weight-row > label, .weight-row > .status { grid-column: 2; }
+}
 tr.total td { border-top: 2px solid var(--border); }
 
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 0; }
@@ -201,6 +215,11 @@ a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
     .settings-row select { flex: 1; min-width: 0; }
 }
 td.item { min-width: 16em; }
-.callout { border: 1px solid var(--warn); border-left-width: 5px; border-radius: 6px; padding: 10px 14px; margin: 0 0 12px; background: var(--panel-2); max-width: 900px; }
-.callout p { margin: 4px 0; }
-.callout p:first-child { color: var(--warn); font-size: 15px; }
+.callout {
+    border: 2px solid var(--bad); border-left-width: 8px; border-radius: 6px; padding: 12px 16px; margin: 0 0 14px;
+    background: color-mix(in srgb, var(--bad) 12%, var(--panel)); max-width: 960px;
+}
+.callout p { margin: 5px 0; }
+.callout ul { margin: 6px 0; padding-left: 20px; }
+.callout li { margin: 4px 0; }
+.callout-title { color: var(--bad); font-size: 18px; font-weight: 700; }

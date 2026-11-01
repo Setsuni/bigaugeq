@@ -48,17 +48,6 @@ export function classSympathetic(code) {
     return { sympathetic: code in CLASS_SYMPATHETIC, sympatheticKind: CLASS_SYMPATHETIC[code] || 'dmg' };
 }
 
-// Starting points by role; shieldAc replaces the AC weight in shield sockets.
-export const PRESETS = [
-    { name: 'Tank', classes: ['WAR', 'PAL', 'SHD'], shieldAc: 15, weights: { ac: 10, hp: 1, hsta: 10, hdex: 5, hagi: 3 } },
-    { name: 'Melee DPS', classes: ['MNK', 'ROG', 'BER', 'RNG', 'BST', 'BRD'], shieldAc: 2,
-        weights: { hp: 1, ac: 2, atk: 3, hstr: 5, hdex: 10, hagi: 3, hsta: 5 } },
-    { name: 'Caster', classes: ['WIZ', 'MAG', 'NEC', 'ENC'], shieldAc: 0,
-        weights: { hp: 1, mana: 1, hint: 10, hsta: 5, sd: 3, cv: 3 } },
-    { name: 'Healer', classes: ['CLR', 'DRU', 'SHM'], shieldAc: 5,
-        weights: { hp: 1, mana: 1, hwis: 10, hsta: 5, heal: 3, cv: 3 } },
-];
-
 // EQ item types: 0 1HS, 1 2HS, 2 1HP, 3 1HB, 4 2HB, 5 bow, 8 shield, 35 2HP, 45 H2H
 const WEAPON_TYPES = new Set([0, 1, 2, 3, 4, 5, 35, 45]);
 const TWO_HAND_TYPES = [1, 4, 35];
@@ -96,6 +85,21 @@ export const ALL_ERAS = -1;
 const OPTION_LIMIT = 40;
 
 const statOf = (aug, stat) => aug?.s?.[stat] || 0;
+const counted = (aug, stat, room) => (room && stat in room ? Math.min(statOf(aug, stat), Math.max(0, room[stat])) : statOf(aug, stat));
+
+// Negative when tiebreak values a beat b, comparing the first tiebreak stat first
+function compareTiebreak(a = [], b = []) {
+    for (let index = 0; index < Math.max(a.length, b.length); index++) {
+        if ((a[index] || 0) !== (b[index] || 0)) return (b[index] || 0) - (a[index] || 0);
+    }
+    return 0;
+}
+
+// Tiebreak values as a bonus far smaller than any real score difference, for the assignment's gains
+const tieBonus = (tiebreak = []) => tiebreak.reduce((total, value, index) => total + value * 1e-5 * 1e-3 ** index, 0);
+// After tiebreaks, the aug already in the socket wins, so no pointless swaps
+const STAY_BONUS = 1e-9;
+const compareOptions = (a, b) => b.score - a.score || compareTiebreak(a.tb, b.tb) || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent));
 
 export const hasBit = (mask, bit) => Math.floor(mask / 2 ** bit) % 2 === 1;
 
@@ -108,10 +112,6 @@ export function typesFromMask(mask) {
 export function classList(classes) {
     if (classes === ALL_CLASSES) return 'ALL';
     return CLASSES.filter((_, index) => hasBit(classes, index)).map(([code]) => code).join(' ');
-}
-
-export function classPreset(classCode) {
-    return PRESETS.find((preset) => preset.classes.includes(classCode)) || PRESETS[0];
 }
 
 export function restrictionLabel(code) {
@@ -188,7 +188,8 @@ export class Optimizer {
         if (profile === 'weapon') return settings.sympathetic ? { sympathetic: settings.sympatheticKind } : { dmg: 1 };
         if (profile === 'bow' && settings.bowDamage) return { dmg: 1 };
         const weights = { ...settings.weights };
-        if (profile === 'shield') weights.ac = settings.shieldAc;
+        // A blank shield AC weight means shields use the normal AC weight
+        if (profile === 'shield' && Number.isFinite(settings.shieldAc)) weights.ac = settings.shieldAc;
         return weights;
     }
 
@@ -196,12 +197,13 @@ export class Optimizer {
     static score(aug, weights, room) {
         if (weights.sympathetic) return aug.sy?.[0] === weights.sympathetic ? aug.sy[1] : 0;
         let total = 0;
-        for (const [stat, weight] of Object.entries(weights)) {
-            const value = statOf(aug, stat);
-            const counted = room && stat in room ? Math.min(value, Math.max(0, room[stat])) : value;
-            total += counted * (weight || 0);
-        }
+        for (const [stat, weight] of Object.entries(weights)) total += counted(aug, stat, room) * (weight || 0);
         return total;
+    }
+
+    // Stats listed with a weight of 0 break ties, in the order they're listed
+    static tiebreak(aug, settings, room) {
+        return Object.entries(settings.weights || {}).filter(([, weight]) => !weight).map(([stat]) => counted(aug, stat, room));
     }
 
     itemStats(itemId) {
@@ -257,9 +259,9 @@ export class Optimizer {
             if (socket && (!hasBit(aug.sl, socket.slot) || !gearFits(aug.r, socket))) continue;
             const score = Optimizer.score(aug, weights, room);
             if (score <= 0 || !this.passesFilters(aug, settings, maxLevel)) continue;
-            rows.push({ aug, score, tiebreak: Optimizer.score(aug, tiebreakWeights, room) });
+            rows.push({ aug, score, tiebreak: Optimizer.score(aug, tiebreakWeights, room), tb: Optimizer.tiebreak(aug, settings, room) });
         }
-        rows.sort((a, b) => b.score - a.score || b.tiebreak - a.tiebreak || a.aug.n.localeCompare(b.aug.n));
+        rows.sort((a, b) => b.score - a.score || b.tiebreak - a.tiebreak || compareTiebreak(a.tb, b.tb) || a.aug.n.localeCompare(b.aug.n));
         return rows.slice(0, limit);
     }
 
@@ -296,27 +298,28 @@ export class Optimizer {
         const weights = this.weightsFor(socket.profile, settings);
         const mask = 2 ** (socket.augType - 1);
         const options = this.rank(mask, settings, settings.level, socket, OPTION_LIMIT, socket.room)
-            .map((row) => ({ aug: row.aug, score: row.score }));
+            .map((row) => ({ aug: row.aug, score: row.score, tb: row.tb }));
         // Other sockets may fill the caps, so the best augs with no room left are candidates too
         if (socket.room) {
             const full = Object.fromEntries(Object.keys(socket.room).map((stat) => [stat, 0]));
             const listed = new Set(options.map((option) => option.aug.id));
             for (const row of this.rank(mask, settings, settings.level, socket, OPTION_LIMIT, full)) {
-                if (!listed.has(row.aug.id)) options.push({ aug: row.aug, score: Optimizer.score(row.aug, weights, socket.room) });
+                if (!listed.has(row.aug.id)) {
+                    options.push({ aug: row.aug, score: Optimizer.score(row.aug, weights, socket.room), tb: Optimizer.tiebreak(row.aug, settings, socket.room) });
+                }
             }
         }
         if (socket.currentId) {
             const aug = this.byId.get(socket.currentId) || { id: socket.currentId, n: socket.currentName, s: {} };
             let current = options.find((option) => option.aug.id === socket.currentId);
             if (!current) {
-                current = { aug, score: Optimizer.score(aug, weights, socket.room) };
+                current = { aug, score: Optimizer.score(aug, weights, socket.room), tb: Optimizer.tiebreak(aug, settings, socket.room) };
                 options.push(current);
             }
             current.isCurrent = true;
             socket.current = current;
         }
-        // On a tie the aug already in the socket wins, so no pointless swaps
-        return options.sort((a, b) => b.score - a.score || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)));
+        return options.sort(compareOptions);
     }
 
     // Each socket can take its best option without an "only once" key freely. Lore groups can be used
@@ -333,17 +336,17 @@ export class Optimizer {
                 const key = Optimizer.optionKey(option);
                 if (key && !socket.bestByKey.has(key)) socket.bestByKey.set(key, option);
             }
-            const baseScore = socket.base?.score || 0;
             gain[index] = new Map();
             for (const [key, option] of socket.bestByKey) {
-                // A lore aug already in this socket wins ties, so equal-score swaps don't happen
-                const stay = option.isCurrent ? 0.001 : 0;
-                if (option.score + stay <= baseScore) continue;
+                // Taken as differences so tiebreaks and the stay bonus survive large scores
+                const edge = (option.score - (socket.base?.score || 0)) + (tieBonus(option.tb) - tieBonus(socket.base?.tb))
+                    + (option.isCurrent ? STAY_BONUS : 0);
+                if (edge <= 0) continue;
                 if (!keyIndex.has(key)) {
                     keys.push(key);
                     keyIndex.set(key, keys.length);
                 }
-                gain[index].set(keyIndex.get(key), option.score - baseScore + stay);
+                gain[index].set(keyIndex.get(key), edge);
             }
         });
         const match = maxWeightMatching(targets.length, keys.length, gain);
@@ -414,7 +417,10 @@ export class Optimizer {
         const rescore = (socket) => {
             const weights = this.weightsFor(socket.profile, settings);
             const room = roomFor(socket);
-            for (const option of socket.options) option.score = Optimizer.score(option.aug, weights, room);
+            for (const option of socket.options) {
+                option.score = Optimizer.score(option.aug, weights, room);
+                option.tb = Optimizer.tiebreak(option.aug, settings, room);
+            }
         };
         for (let pass = 0, moved = true; moved && pass < 20; pass++) {
             moved = false;
@@ -424,7 +430,8 @@ export class Optimizer {
                 let best = socket.choice;
                 for (const option of socket.options) {
                     if (option.aug.k && taken.has(option.aug.k)) continue;
-                    if (option.score > (best?.score ?? 0)) best = option;
+                    const better = best ? option.score - best.score || -compareTiebreak(option.tb, best.tb) : option.score;
+                    if (better > 0) best = option;
                 }
                 if (best !== socket.choice) {
                     socket.choice = best;
@@ -434,7 +441,7 @@ export class Optimizer {
         }
         for (const socket of targets) {
             rescore(socket);
-            socket.options.sort((a, b) => b.score - a.score || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)));
+            socket.options.sort(compareOptions);
         }
     }
 

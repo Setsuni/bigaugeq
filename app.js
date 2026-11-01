@@ -1,5 +1,5 @@
 import {
-    ALL_ERAS, CLASSES, Optimizer, PRESETS, PURITY_TARGET, STATS, SYMPATHETIC_KINDS, classList, classPreset, classBow, classSympathetic, classesFromGear, parseInventory,
+    ALL_ERAS, CLASSES, Optimizer, PURITY_TARGET, STATS, SYMPATHETIC_KINDS, classList, classBow, classSympathetic, classesFromGear, parseInventory,
     restrictionLabel, typesFromMask,
 } from './core.js';
 
@@ -10,7 +10,6 @@ const CHARACTERS_KEY = 'bisaug.characters';
 const CURRENT_KEY = 'bisaug.current';
 const IGNORED_KEY = 'bisaug.ignored';
 const MAX_CHARACTERS = 12;
-const CUSTOM_PRESET = 'Custom';
 const ALTERNATIVES = 5;
 const AUG_TYPE_NAMES = { 3: 'spell', 7: 'general', 8: 'general' };
 const touchScreen = window.matchMedia('(hover: none)').matches;
@@ -27,6 +26,7 @@ let characters = {};
 let ignored = new Set();
 let result = null;
 let gearStats = null;
+let weightRows = [];
 const expanded = new Set();
 
 function storageGet(key) {
@@ -40,20 +40,17 @@ function storageSet(key, value) {
 function defaultSettings() {
     return {
         classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false, caps: {},
-        ...presetValues(classPreset('SHD')), ...classSympathetic('SHD'), ...classBow('SHD'),
+        weights: {}, shieldAc: null, ...classSympathetic('SHD'), ...classBow('SHD'),
     };
 }
 
-function presetValues(preset) {
-    return {
-        preset: preset.name, weights: { ...preset.weights }, shieldAc: preset.shieldAc,
-    };
-}
-
-// Named presets follow their current weights; only Custom keeps the user's own
-function withCurrentPreset(loaded) {
-    const preset = PRESETS.find((p) => p.name === loaded.preset);
-    return preset ? Object.assign(loaded, presetValues(preset)) : loaded;
+// Weights saved before presets were removed stay as the user's own. Back then 0 meant unused; now a
+// listed 0 is a tiebreaker, so those are dropped.
+function withoutPreset(loaded) {
+    if ('preset' in loaded) loaded.weights = Object.fromEntries(Object.entries(loaded.weights || {}).filter(([, weight]) => weight));
+    delete loaded.preset;
+    delete loaded.custom;
+    return loaded;
 }
 
 function loadSettings() {
@@ -61,7 +58,7 @@ function loadSettings() {
     const loaded = { ...defaultSettings(), ...(saved || {}) };
     if (saved && saved.sympathetic === undefined) Object.assign(loaded, classSympathetic(loaded.classCode));
     if (saved && saved.bowDamage === undefined) Object.assign(loaded, classBow(loaded.classCode));
-    return withCurrentPreset(loaded);
+    return withoutPreset(loaded);
 }
 
 function saveSettings() {
@@ -103,7 +100,7 @@ function charactersHtml() {
     const rows = keys.map((key) => {
         const saved = characters[key].settings || {};
         const className = CLASSES.find(([code]) => code === saved.classCode)?.[1] || '';
-        const what = [className && `${className} ${saved.level}`, saved.preset].filter(Boolean).join(' · ');
+        const what = className ? `${className} ${saved.level}` : '';
         const action = key === characterKey ? '<span class="muted">Current</span>'
             : `<button type="button" data-switch="${escapeHtml(key)}">Switch</button>`;
         return `<li class="${key === characterKey ? 'current' : ''}"><span class="name"><strong>${escapeHtml(characterLabel(key))}</strong></span>
@@ -207,6 +204,7 @@ function statDelta(aug, current) {
     return parts.length ? `<div class="delta">${parts.join(' · ')}</div>` : '';
 }
 
+const hasWeights = () => Object.values(settings.weights).some(Boolean);
 const cappedStats = () => STATS.filter(([key]) => Number.isFinite(settings.caps?.[key]));
 
 function capStatus(total, cap) {
@@ -229,6 +227,8 @@ function optimizerTab() {
         return `<div class="empty"><p><strong>No aug sockets on your worn gear</strong></p>
             <p class="muted">None of the ${inventory.worn.length} items you're wearing has an aug socket, so there's nothing to optimize yet.</p></div>`;
     }
+    const noWeights = hasWeights() ? '' : `<div class="notice bad" role="alert"><p><strong>Add at least one stat under Stat weights to see suggestions.</strong>
+        Until then only weapon sockets are ranked.</p></div>`;
     const withSource = result.sockets.some((socket) => socket.choice?.aug.src);
     let now = 0;
     let best = 0;
@@ -269,7 +269,7 @@ function optimizerTab() {
     }
     const caps = cappedStats().map(([key, label]) => `<span class="chip"><strong>${label}</strong> ${gearStats.totals[key] || 0} &rarr; ${after[key] || 0}
         <span class="muted">/ ${settings.caps[key]} cap</span></span>`).join('');
-    return `${caps ? `<div class="chips">${caps}</div>` : ''}<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
+    return `${noWeights}${caps ? `<div class="chips">${caps}</div>` : ''}<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
         <span class="muted">Gain is your stat-weight score; the line under it is the actual stat change. Lore augs are used once.
         Augs you already own are always included, whatever expansion you pick; the expansion only limits augs to go get. Expand a slot for more options.</span></p>
         <table><thead><tr><th scope="col">Slot</th><th scope="col">Current</th><th scope="col">Optimized</th><th scope="col" class="num">Gain</th>${withSource ? '<th scope="col">Source</th>' : ''}</tr></thead>
@@ -483,7 +483,7 @@ function runSearch() {
         .reduce((total, type) => total | (1 << (type - 1)), 0);
     const room = optimizer.capRoom(inventory, settings);
     const rows = mask ? optimizer.rank(mask, { ...runSettings(), myClassOnly: settings.myClassOnly }, Number($('searchLevel').value) || 0, null, 100, room) : [];
-    const weighted = STATS.filter(([key]) => settings.weights[key]);
+    const weighted = Object.keys(settings.weights).map((key) => [key, STATS.find(([stat]) => stat === key)?.[1] || key]);
     $('searchCount').textContent = `${rows.length} results`;
     $('searchResults').innerHTML = `<table><thead><tr><th>Name</th><th>Era</th><th>Types</th><th>Gear</th><th class="num">Score</th>
         ${weighted.map(([, label]) => `<th class="num">${label}</th>`).join('')}<th>Effect</th></tr></thead><tbody>${rows.map(({ aug, score }) => `<tr>
@@ -592,9 +592,10 @@ function renderSettings() {
     $('andOlder').checked = settings.andOlder;
     $('myClassOnly').checked = settings.myClassOnly;
     $('includeEvents').checked = settings.includeEvents;
-    fillSelect($('preset'), [...PRESETS.map((p) => [p.name, `${p.name} (${p.classes.join(' ')})`]), [CUSTOM_PRESET, CUSTOM_PRESET]], settings.preset);
-    $('presetSummary').textContent = `(${settings.preset})`;
-    $('shieldAc').value = settings.shieldAc;
+    $('shieldAc').value = settings.shieldAc ?? '';
+    if (!hasWeights()) $('weightsPanel').open = true;
+    weightRows = Object.entries(settings.weights).map(([stat, worth]) => ({ stat, worth, cap: settings.caps?.[stat] ?? null }));
+    if (!weightRows.length) weightRows.push(blankRow());
     renderWeights();
     $('sympathetic').checked = settings.sympathetic;
     $('bowDamage').checked = settings.bowDamage;
@@ -602,20 +603,41 @@ function renderSettings() {
     $('sympatheticKind').disabled = !settings.sympathetic;
 }
 
-// Caps aren't part of a preset; they depend on your AAs, so each character keeps its own
+const blankRow = () => ({ stat: '', worth: null, cap: null });
+
+// Rows are kept in order: a stat worth 0 is a tiebreaker, and earlier tiebreakers count first.
+// Caps depend on your AAs, so each character keeps its own.
+function saveWeightRows() {
+    const listed = weightRows.filter((row) => row.stat);
+    settings.weights = Object.fromEntries(listed.map((row) => [row.stat, row.worth || 0]));
+    settings.caps = Object.fromEntries(listed.filter((row) => Number.isFinite(row.cap)).map((row) => [row.stat, row.cap]));
+}
+
 function renderWeights() {
     const totals = gearStats?.totals;
-    const rows = STATS.map(([key, label]) => {
-        const cap = settings.caps?.[key];
-        return `<tr><td>${label}</td>
-            <td class="num"><input type="number" id="weight-${key}" data-weight="${key}" value="${settings.weights[key] || 0}" aria-label="${label} weight"></td>
-            <td class="num">${totals ? totals[key] || 0 : '<span class="muted">-</span>'}</td>
-            <td class="num"><input type="number" id="cap-${key}" data-cap="${key}" value="${cap ?? ''}" placeholder="none" min="0" aria-label="${label} cap"></td>
-            <td>${totals ? capStatus(totals[key] || 0, cap) : ''}</td></tr>`;
+    const used = new Set(weightRows.map((row) => row.stat).filter(Boolean));
+    const base = weightRows.findIndex((row) => row.stat && row.worth === 1);
+    const rows = weightRows.map((row, index) => {
+        const options = STATS.filter(([key]) => key === row.stat || !used.has(key))
+            .map(([key, label]) => `<option value="${key}"${key === row.stat ? ' selected' : ''}>${label}</option>`).join('');
+        let status = '<span class="muted">-</span>';
+        if (row.stat && totals) {
+            const total = totals[row.stat] || 0;
+            status = Number.isFinite(row.cap) ? `${total} / ${row.cap} ${capStatus(total, row.cap)}` : `<span class="muted">${total} on your gear</span>`;
+        }
+        const role = !row.stat ? '' : !row.worth ? '<span class="tag">tiebreaker</span>' : index === base ? '<span class="tag">base</span>' : '';
+        return `<div class="weight-row${row.stat ? '' : ' empty'}">
+            <span class="muted">${index + 1}</span>
+            <span><select id="stat-${index}" data-row="${index}" data-field="stat" aria-label="Stat ${index + 1}">
+                <option value=""${row.stat ? '' : ' selected'}>Choose a stat…</option>${options}</select>${role}</span>
+            <label>worth <input type="number" id="worth-${index}" data-row="${index}" data-field="worth" value="${row.worth ?? ''}" placeholder="0" min="0"> points</label>
+            <label>cap <input type="number" id="cap-${index}" data-row="${index}" data-field="cap" value="${row.cap ?? ''}" placeholder="none" min="0"></label>
+            <span class="status">${status}</span>
+            <button type="button" class="remove" data-remove="${index}" aria-label="Remove row ${index + 1}">&times;</button>
+        </div>`;
     }).join('');
-    $('weights').innerHTML = `<table class="weights-table"><thead><tr><th scope="col">Stat</th><th scope="col" class="num">Weight</th>
-        <th scope="col" class="num">Your gear</th><th scope="col" class="num">Cap</th><th scope="col">Status</th></tr></thead><tbody>${rows}</tbody></table>`;
-    labelCells($('weights'));
+    $('weights').innerHTML = `<div class="weight-rows">${rows}</div>
+        <button type="button" class="add-stat" id="addStat"${used.size >= STATS.length ? ' disabled' : ''}>+ Add a stat</button>`;
 }
 
 function labelCells(container) {
@@ -665,14 +687,16 @@ function loadInventory(text, name) {
     gearStats = optimizer.statTotals(parsed);
     characterKey = keyForFile(name);
     const saved = characters[characterKey]?.settings;
-    if (saved) settings = withCurrentPreset({ ...defaultSettings(), ...saved });
+    if (saved) settings = withoutPreset({ ...defaultSettings(), ...saved });
     else {
         // A new character starts from its gear's class when the gear only fits one
         const guessed = classesFromGear(parsed, optimizer.hosts);
-        settings = { ...settings, caps: {} };
+        // Weights and caps depend on class and level, so a new character starts blank
+        settings = { ...settings, weights: {}, shieldAc: null, caps: {} };
+        $('weightsPanel').open = true;
         if (guessed.length === 1 && guessed[0] !== settings.classCode) {
             settings.classCode = guessed[0];
-            Object.assign(settings, presetValues(classPreset(guessed[0])), classSympathetic(guessed[0]), classBow(guessed[0]));
+            Object.assign(settings, classSympathetic(guessed[0]), classBow(guessed[0]));
         }
     }
     renderSettings();
@@ -702,19 +726,10 @@ function clearCharacter() {
     recompute();
 }
 
-// Any weight edit becomes the user's Custom set, restored whenever Custom is picked again.
-function saveCustom() {
-    settings.preset = CUSTOM_PRESET;
-    settings.custom = { weights: { ...settings.weights }, shieldAc: settings.shieldAc };
-    $('preset').value = CUSTOM_PRESET;
-    $('presetSummary').textContent = `(${CUSTOM_PRESET})`;
-    changed();
-}
-
 function wireSettings() {
     $('class').addEventListener('change', () => {
         settings.classCode = $('class').value;
-        Object.assign(settings, presetValues(classPreset(settings.classCode)), classSympathetic(settings.classCode), classBow(settings.classCode));
+        Object.assign(settings, classSympathetic(settings.classCode), classBow(settings.classCode));
         renderSettings();
         changed();
     });
@@ -723,32 +738,35 @@ function wireSettings() {
     for (const id of ['andOlder', 'myClassOnly', 'includeEvents']) {
         $(id).addEventListener('change', () => { settings[id] = $(id).checked; changed(); });
     }
-    $('preset').addEventListener('change', () => {
-        const preset = $('preset').value === CUSTOM_PRESET
-            ? { name: CUSTOM_PRESET, ...(settings.custom || { weights: settings.weights, shieldAc: settings.shieldAc }) }
-            : PRESETS.find((p) => p.name === $('preset').value);
-        Object.assign(settings, presetValues(preset));
-        // Custom is the user's own set, so show it for editing
-        if (preset.name === CUSTOM_PRESET) $('weightsPanel').open = true;
-        renderSettings();
+    $('shieldAc').addEventListener('change', () => {
+        const value = $('shieldAc').value.trim();
+        settings.shieldAc = value === '' ? null : Number(value);
         changed();
     });
-    $('shieldAc').addEventListener('change', () => {
-        settings.shieldAc = Number($('shieldAc').value) || 0;
-        saveCustom();
-    });
     $('weights').addEventListener('change', (event) => {
-        const { weight, cap } = event.target.dataset;
-        if (weight) {
-            settings.weights[weight] = Number(event.target.value) || 0;
-            saveCustom();
-        } else if (cap) {
-            const value = event.target.value.trim();
-            settings.caps = { ...settings.caps };
-            if (value === '') delete settings.caps[cap]; else settings.caps[cap] = Number(value);
-            if (gearStats) event.target.closest('tr').lastElementChild.innerHTML = capStatus(gearStats.totals[cap] || 0, settings.caps[cap]);
-            changed();
+        const { row, field } = event.target.dataset;
+        if (row === undefined) return;
+        const value = event.target.value.trim();
+        weightRows[row][field] = field === 'stat' ? value : value === '' ? null : Number(value);
+        saveWeightRows();
+        renderWeights();
+        $(event.target.id)?.focus();
+        changed();
+    });
+    $('weights').addEventListener('click', (event) => {
+        if (event.target.id === 'addStat') {
+            weightRows.push(blankRow());
+            renderWeights();
+            $(`stat-${weightRows.length - 1}`).focus();
+            return;
         }
+        const index = event.target.dataset.remove;
+        if (index === undefined) return;
+        weightRows.splice(Number(index), 1);
+        if (!weightRows.length) weightRows.push(blankRow());
+        saveWeightRows();
+        renderWeights();
+        changed();
     });
     $('bowDamage').addEventListener('change', () => { settings.bowDamage = $('bowDamage').checked; changed(); });
     $('sympathetic').addEventListener('change', () => {

@@ -17,7 +17,7 @@ Your file is read in your browser and is never uploaded.
 - **Spell augs**: type 3 augs for your class, showing the highest spell in each line at your level and era, and whether you wear, own or are missing each aug.
 - **Search**: rank every aug for a slot type by your stat weights.
 
-Stat weights come from role presets (Tank, Melee DPS, Caster, Healer) and can be changed. Weapon sockets rank by weapon damage, or by a sympathetic proc (damage, healing, mana return or aggro reduction) when that's turned on; it's on by default for casters and healers except Enchanters. Shield sockets use their own AC weight.
+Stat weights start blank and you fill them in as exchange rates: the stat you care about most gets 1, every other stat gets what one point of it is worth in that stat. Weapon sockets rank by weapon damage, or by a sympathetic proc (damage, healing, mana return or aggro reduction) when that's turned on; it's on by default for casters and healers except Enchanters. Shield sockets can have their own AC weight; left blank they use the normal one.
 
 Any stat can have a cap, typed in from your in-game stats window and kept for each character. Points past a cap are worth nothing, so once a stat like Mana Regen is capped, other stats take over. Your current totals come from the gear and augs in your inventory file; the Gear Stats tab shows them item by item.
 
