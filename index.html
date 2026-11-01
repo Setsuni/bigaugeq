@@ -38,6 +38,13 @@
 
         <section class="card" id="characterSettings">
             <h2 class="step"><span class="step-number">2</span>Set your character</h2>
+            <div class="callout" role="note">
+                <p><strong>Set your stat weights first. The suggestions are only as good as your weights.</strong></p>
+                <p>A weight is an exchange rate. Give the stat you care about most a weight of 1, then give every other stat what one point of it is worth in that stat.
+                    For example, a level 85 Wizard wants mana, and each point of HInt gives about 24 mana, so Mana is 1 and HInt is 24.
+                    A weight of 0 means the stat is ignored.</p>
+                <p>If a stat has a cap, like Mana Regen, enter the cap from your in-game stats window and give the stat a high weight. It counts until you reach the cap, then other stats take over.</p>
+            </div>
             <div class="settings-row">
                 <label>Class <select id="class" autocomplete="off"></select></label>
                 <label>Level <input type="number" id="level" autocomplete="off" min="1" max="130"></label>
