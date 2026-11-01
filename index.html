@@ -14,7 +14,7 @@
         <div class="intro">
             <p>Load your inventory and BIS Aug checks every aug socket on the gear you're wearing:</p>
             <ul>
-                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own. Weapon sockets rank by weapon damage, or for casters and healers by sympathetic procs.</li>
+                <li><strong>Optimizes your augs</strong> with a weighting system: each stat (AC, HP, heroic stats, mana and more) gets a weight, and every aug is scored by those weights. Pick a role preset or set your own, and set caps so stats you've maxed stop counting. Weapon sockets rank by weapon damage, or for casters and healers by sympathetic procs.</li>
                 <li><strong>Respects lore</strong>: a lore aug is only used once, and it tells you when moving an aug you already wear to another slot is worth more.</li>
                 <li><strong>Tells you what to farm</strong>: upgrades you already own in your bags or bank first, then the ones to go get, with links showing where each one drops.</li>
                 <li><strong>Lists your spell augs</strong> (type 3): the highest spell in each line at your level, and which augs you have or are missing.</li>
@@ -55,6 +55,7 @@
                     <label>Shield AC weight <input type="number" id="shieldAc" autocomplete="off"></label>
                     <span class="muted">Weapon sockets rank by weapon damage, or by sympathetic procs when that's on.</span>
                 </div>
+                <p class="muted">Caps are optional and kept for each character. Type the cap from your in-game stats window; points past it are worth nothing, so other stats take over once you reach it.</p>
                 <div class="weights" id="weights"></div>
             </details>
             <details id="ignoredPanel">
@@ -72,6 +73,7 @@
             <button type="button" data-tab="farm">To Farm</button>
             <button type="button" data-tab="spells">Spell augs</button>
             <button type="button" data-tab="purity">Purity <span id="purityBadge" class="badge" hidden></span></button>
+            <button type="button" data-tab="stats">Gear Stats</button>
             <button type="button" data-tab="search">Search</button>
         </nav>
         <section class="card tab" id="tab-optimizer"></section>
@@ -79,6 +81,7 @@
         <section class="card tab" id="tab-farm" hidden></section>
         <section class="card tab" id="tab-spells" hidden></section>
         <section class="card tab" id="tab-purity" hidden></section>
+        <section class="card tab" id="tab-stats" hidden></section>
         <section class="card tab" id="tab-search" hidden>
             <div class="settings-row">
                 <label>Aug type <input type="text" id="searchTypes" autocomplete="off" value="7,8" size="8"></label>

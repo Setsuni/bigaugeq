@@ -26,6 +26,7 @@ let characterKey = '';
 let characters = {};
 let ignored = new Set();
 let result = null;
+let gearStats = null;
 const expanded = new Set();
 
 function storageGet(key) {
@@ -38,7 +39,7 @@ function storageSet(key, value) {
 
 function defaultSettings() {
     return {
-        classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false,
+        classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false, caps: {},
         ...presetValues(classPreset('SHD')), ...classSympathetic('SHD'), ...classBow('SHD'),
     };
 }
@@ -206,6 +207,15 @@ function statDelta(aug, current) {
     return parts.length ? `<div class="delta">${parts.join(' · ')}</div>` : '';
 }
 
+const cappedStats = () => STATS.filter(([key]) => Number.isFinite(settings.caps?.[key]));
+
+function capStatus(total, cap) {
+    if (!Number.isFinite(cap)) return '';
+    const room = cap - total;
+    if (room > 0) return `<span class="warn">${room} to go</span>`;
+    return `<span class="good">Capped</span>${room < 0 ? ` <span class="muted">(${-room} over)</span>` : ''}`;
+}
+
 function typeLabel(socket) {
     const name = socket.profile === 'weapon' || socket.profile === 'bow' ? socket.profile : AUG_TYPE_NAMES[socket.augType];
     return name ? `${name} (type ${socket.augType})` : `type ${socket.augType}`;
@@ -253,7 +263,13 @@ function optimizerTab() {
         const source = withSource ? `<td class="wrap">${choice && !choice.isCurrent ? escapeHtml(choice.aug.src || '') : ''}</td>` : null;
         return socketRow(String(index), socket, current, optimized, gain, source);
     }).join('');
-    return `<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
+    const after = { ...gearStats.totals };
+    for (const socket of result.sockets) {
+        for (const [key] of cappedStats()) after[key] = (after[key] || 0) + (socket.choice?.aug.s?.[key] || 0) - (socket.current?.aug.s?.[key] || 0);
+    }
+    const caps = cappedStats().map(([key, label]) => `<span class="chip"><strong>${label}</strong> ${gearStats.totals[key] || 0} &rarr; ${after[key] || 0}
+        <span class="muted">/ ${settings.caps[key]} cap</span></span>`).join('');
+    return `${caps ? `<div class="chips">${caps}</div>` : ''}<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
         <span class="muted">Gain is your stat-weight score; the line under it is the actual stat change. Lore augs are used once.
         Augs you already own are always included, whatever expansion you pick; the expansion only limits augs to go get. Expand a slot for more options.</span></p>
         <table><thead><tr><th scope="col">Slot</th><th scope="col">Current</th><th scope="col">Optimized</th><th scope="col" class="num">Gain</th>${withSource ? '<th scope="col">Source</th>' : ''}</tr></thead>
@@ -435,12 +451,38 @@ function renderPurityBadge() {
     $('purityBadge').hidden = !missing;
 }
 
+// ---------- gear stats tab ----------
+
+function statsTab() {
+    if (!inventory) return '<p class="muted">Load your inventory file first.</p>';
+    const { totals, rows } = gearStats;
+    const isCapped = (key) => Number.isFinite(settings.caps?.[key]);
+    const columns = STATS.filter(([key]) => totals[key] || isCapped(key));
+    const cell = (value) => `<td class="num">${value || '<span class="muted">-</span>'}</td>`;
+    const body = rows.filter((row) => row.item.itemId).map((row) => {
+        // Ornaments have no stats, so only other unknown augs get a warning
+        const augs = row.augs.map((aug) => (!aug.unknown ? augLink(aug) : /ornament/i.test(aug.n) ? `<span>${escapeHtml(aug.n)}</span>`
+            : `<span class="warn">${escapeHtml(aug.n)} (not in our data, counted as 0)</span>`)).join(', ');
+        return `<tr><td><strong>${escapeHtml(row.slotName)}</strong></td>
+            <td class="item">${escapeHtml(row.item.itemName)}${augs ? `<div class="sub">${augs}</div>` : ''}</td>${columns.map(([key]) => cell(row.combined[key])).join('')}</tr>`;
+    }).join('');
+    const footRow = (label, value) => `<tr class="total"><td></td><td><strong>${label}</strong></td>${columns.map(([key]) => `<td class="num">${value(key)}</td>`).join('')}</tr>`;
+    const chips = cappedStats().map(([key, label]) => `<span class="chip"><strong>${label}</strong> ${totals[key] || 0} / ${settings.caps[key]} ${capStatus(totals[key] || 0, settings.caps[key])}</span>`).join('');
+    return `<p class="summary">Stats from the gear you're wearing and the augs in it, read from your inventory file.
+        <span class="muted">HP, Mana and AC are gear only; your in-game stats window adds base stats, AAs and buffs. Set caps under Stat weights.</span></p>
+        ${chips ? `<div class="chips">${chips}</div>` : ''}
+        <table><thead><tr><th scope="col">Slot</th><th scope="col">Item and augs</th>${columns.map(([, label]) => `<th scope="col" class="num">${label}</th>`).join('')}</tr></thead>
+        <tbody>${body}${footRow('Total', (key) => `<strong>${totals[key] || 0}</strong>`)}
+        ${columns.some(([key]) => isCapped(key)) ? footRow('Cap', (key) => settings.caps?.[key] ?? '') + footRow('Room', (key) => capStatus(totals[key] || 0, settings.caps?.[key])) : ''}</tbody></table>`;
+}
+
 // ---------- search tab ----------
 
 function runSearch() {
     const mask = $('searchTypes').value.split(/[^0-9]+/).map(Number).filter((type) => type >= 1 && type <= 30)
         .reduce((total, type) => total | (1 << (type - 1)), 0);
-    const rows = mask ? optimizer.rank(mask, { ...runSettings(), myClassOnly: settings.myClassOnly }, Number($('searchLevel').value) || 0, null, 100) : [];
+    const room = optimizer.capRoom(inventory, settings);
+    const rows = mask ? optimizer.rank(mask, { ...runSettings(), myClassOnly: settings.myClassOnly }, Number($('searchLevel').value) || 0, null, 100, room) : [];
     const weighted = STATS.filter(([key]) => settings.weights[key]);
     $('searchCount').textContent = `${rows.length} results`;
     $('searchResults').innerHTML = `<table><thead><tr><th>Name</th><th>Era</th><th>Types</th><th>Gear</th><th class="num">Score</th>
@@ -553,11 +595,27 @@ function renderSettings() {
     fillSelect($('preset'), [...PRESETS.map((p) => [p.name, `${p.name} (${p.classes.join(' ')})`]), [CUSTOM_PRESET, CUSTOM_PRESET]], settings.preset);
     $('presetSummary').textContent = `(${settings.preset})`;
     $('shieldAc').value = settings.shieldAc;
-    $('weights').innerHTML = STATS.map(([key, label]) => `<label>${label} <input type="number" data-weight="${key}" value="${settings.weights[key] || 0}"></label>`).join('');
+    renderWeights();
     $('sympathetic').checked = settings.sympathetic;
     $('bowDamage').checked = settings.bowDamage;
     fillSelect($('sympatheticKind'), SYMPATHETIC_KINDS, settings.sympatheticKind);
     $('sympatheticKind').disabled = !settings.sympathetic;
+}
+
+// Caps aren't part of a preset; they depend on your AAs, so each character keeps its own
+function renderWeights() {
+    const totals = gearStats?.totals;
+    const rows = STATS.map(([key, label]) => {
+        const cap = settings.caps?.[key];
+        return `<tr><td>${label}</td>
+            <td class="num"><input type="number" id="weight-${key}" data-weight="${key}" value="${settings.weights[key] || 0}" aria-label="${label} weight"></td>
+            <td class="num">${totals ? totals[key] || 0 : '<span class="muted">-</span>'}</td>
+            <td class="num"><input type="number" id="cap-${key}" data-cap="${key}" value="${cap ?? ''}" placeholder="none" min="0" aria-label="${label} cap"></td>
+            <td>${totals ? capStatus(totals[key] || 0, cap) : ''}</td></tr>`;
+    }).join('');
+    $('weights').innerHTML = `<table class="weights-table"><thead><tr><th scope="col">Stat</th><th scope="col" class="num">Weight</th>
+        <th scope="col" class="num">Your gear</th><th scope="col" class="num">Cap</th><th scope="col">Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    labelCells($('weights'));
 }
 
 function labelCells(container) {
@@ -575,8 +633,9 @@ function renderTabs() {
     $('tab-farm').innerHTML = farmTab();
     $('tab-spells').innerHTML = spellsTab();
     $('tab-purity').innerHTML = purityTab();
+    $('tab-stats').innerHTML = statsTab();
     renderPurityBadge();
-    for (const id of ['tab-optimizer', 'tab-plan', 'tab-farm', 'tab-spells', 'tab-purity']) labelCells($(id));
+    for (const id of ['tab-optimizer', 'tab-plan', 'tab-farm', 'tab-spells', 'tab-purity', 'tab-stats']) labelCells($(id));
 }
 
 function recompute() {
@@ -603,13 +662,14 @@ function loadInventory(text, name) {
     }
     inventory = parsed;
     inventoryName = name;
+    gearStats = optimizer.statTotals(parsed);
     characterKey = keyForFile(name);
     const saved = characters[characterKey]?.settings;
     if (saved) settings = withCurrentPreset({ ...defaultSettings(), ...saved });
     else {
         // A new character starts from its gear's class when the gear only fits one
         const guessed = classesFromGear(parsed, optimizer.hosts);
-        settings = { ...settings };
+        settings = { ...settings, caps: {} };
         if (guessed.length === 1 && guessed[0] !== settings.classCode) {
             settings.classCode = guessed[0];
             Object.assign(settings, presetValues(classPreset(guessed[0])), classSympathetic(guessed[0]), classBow(guessed[0]));
@@ -634,9 +694,11 @@ function clearCharacter() {
     characterKey = '';
     inventory = null;
     inventoryName = '';
+    gearStats = null;
     saveCharacters();
     storageSet(INVENTORY_KEY, '');
     renderLoaded();
+    renderWeights();
     recompute();
 }
 
@@ -676,10 +738,17 @@ function wireSettings() {
         saveCustom();
     });
     $('weights').addEventListener('change', (event) => {
-        const key = event.target.dataset.weight;
-        if (!key) return;
-        settings.weights[key] = Number(event.target.value) || 0;
-        saveCustom();
+        const { weight, cap } = event.target.dataset;
+        if (weight) {
+            settings.weights[weight] = Number(event.target.value) || 0;
+            saveCustom();
+        } else if (cap) {
+            const value = event.target.value.trim();
+            settings.caps = { ...settings.caps };
+            if (value === '') delete settings.caps[cap]; else settings.caps[cap] = Number(value);
+            if (gearStats) event.target.closest('tr').lastElementChild.innerHTML = capStatus(gearStats.totals[cap] || 0, settings.caps[cap]);
+            changed();
+        }
     });
     $('bowDamage').addEventListener('change', () => { settings.bowDamage = $('bowDamage').checked; changed(); });
     $('sympathetic').addEventListener('change', () => {
@@ -731,8 +800,8 @@ function wireSettings() {
 
 async function start() {
     const load = (name) => fetch(`data/${name}.json`).then((response) => response.json());
-    const [meta, augs, hosts, spells] = await Promise.all(['meta', 'augs', 'hosts', 'spells'].map(load));
-    optimizer = new Optimizer({ meta, augs, hosts, spells });
+    const [meta, augs, hosts, spells, gear] = await Promise.all(['meta', 'augs', 'hosts', 'spells', 'gear'].map(load));
+    optimizer = new Optimizer({ meta, augs, hosts, spells, gear });
     settings = loadSettings();
     try { ignored = new Set(JSON.parse(storageGet(IGNORED_KEY) || '[]')); } catch { ignored = new Set(); }
     loadCharacters();

@@ -19,6 +19,8 @@ Your file is read in your browser and is never uploaded.
 
 Stat weights come from role presets (Tank, Melee DPS, Caster, Healer) and can be changed. Weapon sockets rank by weapon damage, or by a sympathetic proc (damage, healing, mana return or aggro reduction) when that's turned on; it's on by default for casters and healers except Enchanters. Shield sockets use their own AC weight.
 
+Any stat can have a cap, typed in from your in-game stats window and kept for each character. Points past a cap are worth nothing, so once a stat like Mana Regen is capped, other stats take over. Your current totals come from the gear and augs in your inventory file; the Gear Stats tab shows them item by item.
+
 ## Expansions
 
 Augs are grouped by level-cap era unless their expansion is known. Event rewards (anniversary, seasonal) are hidden unless you include them. If an aug shows the wrong expansion or event, use the **report** link next to it or [open a correction](https://github.com/Setsuni/bigaugeq/issues/new?template=expansion-correction.yml); fixes are reviewed before they go live.

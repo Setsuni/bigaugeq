@@ -22,6 +22,7 @@ export const STATS = [
     ['ac', 'AC'], ['hp', 'HP'], ['mana', 'Mana'], ['end', 'End'], ['atk', 'ATK'],
     ['hsta', 'HSta'], ['hstr', 'HStr'], ['hdex', 'HDex'], ['hagi', 'HAgi'], ['hwis', 'HWis'],
     ['hint', 'HInt'], ['hcha', 'HCha'], ['cv', 'Clairvoyance'], ['heal', 'Heal Amt'], ['sd', 'Spell Dmg'],
+    ['hpregen', 'HP Regen'], ['mregen', 'Mana Regen'], ['eregen', 'End Regen'],
 ];
 
 // What a sympathetic proc (focus that fires a spell on cast) does; casters rank weapon sockets by it
@@ -94,6 +95,8 @@ const VISIBLE_SLOTS = new Set([2, 7, 9, 10, 12, 17, 18, 19]);
 export const ALL_ERAS = -1;
 const OPTION_LIMIT = 40;
 
+const statOf = (aug, stat) => aug?.s?.[stat] || 0;
+
 export const hasBit = (mask, bit) => Math.floor(mask / 2 ** bit) % 2 === 1;
 
 export function typesFromMask(mask) {
@@ -139,7 +142,7 @@ export function parseInventory(text) {
         const id = Number(idText);
         if (!location || location === 'Location' || !Number.isFinite(id)) continue;
         const socketMatch = location.match(/^([^-]+)-Slot(\d+)$/);
-        const isBagOrBank = /^(General|Bank|SharedBank)/.test(location);
+        const isBagOrBank = /^(General|Bank|SharedBank|Personal-Depot)/.test(location);
         if (!isBagOrBank && !socketMatch && location !== 'Held') {
             wornIndex += 1;
             worn.push({ slot: wornIndex, location, itemId: id, itemName: name, augs: [] });
@@ -147,7 +150,8 @@ export function parseInventory(text) {
             const item = worn[worn.length - 1];
             item.augs.push({ index: Number(socketMatch[2]), id, name: id ? name : null });
         } else if (isBagOrBank && id) {
-            const where = location.startsWith('General') ? 'Bags' : location.startsWith('SharedBank') ? 'Shared bank' : 'Bank';
+            const where = location.startsWith('General') ? 'Bags' : location.startsWith('SharedBank') ? 'Shared bank'
+                : location.startsWith('Personal-Depot') ? 'Depot' : 'Bank';
             const entries = owned.get(id) || [];
             entries.push({ where, count: Number(countText) || 1 });
             owned.set(id, entries);
@@ -161,6 +165,8 @@ export class Optimizer {
         this.augs = data.augs;
         this.hosts = data.hosts;
         this.spells = data.spells;
+        this.gear = data.gear || {};
+        this.gearStats = data.meta.gearStats || [];
         this.expansions = data.meta.expansions;
         this.byId = new Map(this.augs.map((aug) => [aug.id, aug]));
         this.expansionByCode = new Map(this.expansions.map((expansion) => [expansion.c, expansion]));
@@ -186,11 +192,46 @@ export class Optimizer {
         return weights;
     }
 
-    static score(aug, weights) {
+    // room holds how many more points of each capped stat still count; points past a cap are worth nothing
+    static score(aug, weights, room) {
         if (weights.sympathetic) return aug.sy?.[0] === weights.sympathetic ? aug.sy[1] : 0;
         let total = 0;
-        for (const [stat, weight] of Object.entries(weights)) total += (aug.s?.[stat] || 0) * (weight || 0);
+        for (const [stat, weight] of Object.entries(weights)) {
+            const value = statOf(aug, stat);
+            const counted = room && stat in room ? Math.min(value, Math.max(0, room[stat])) : value;
+            total += counted * (weight || 0);
+        }
         return total;
+    }
+
+    itemStats(itemId) {
+        const stats = {};
+        (this.gear[itemId] || []).forEach((value, index) => { if (value) stats[this.gearStats[index]] = value; });
+        return stats;
+    }
+
+    // Stats from worn gear and the augs in it, per item and in total. Augs not in our data count as 0.
+    statTotals(inventory) {
+        const totals = {};
+        const rows = inventory.worn.filter((item) => item.slot < WORN_SLOTS.length).map((item) => {
+            const stats = this.itemStats(item.itemId);
+            const augs = item.augs.filter((aug) => aug.id).map((aug) => this.byId.get(aug.id) || { id: aug.id, n: aug.name, unknown: true });
+            const combined = { ...stats };
+            for (const aug of augs) {
+                for (const [stat, value] of Object.entries(aug.s || {})) if (stat !== 'dmg') combined[stat] = (combined[stat] || 0) + value;
+            }
+            for (const [stat, value] of Object.entries(combined)) totals[stat] = (totals[stat] || 0) + value;
+            return { item, slotName: WORN_SLOTS[item.slot] || item.location, stats, augs, combined };
+        });
+        return { totals, rows };
+    }
+
+    // Room left under each cap the user set, or null when there are none
+    capRoom(inventory, settings) {
+        const caps = Object.entries(settings.caps || {}).filter(([, cap]) => Number.isFinite(cap));
+        if (!caps.length || !inventory) return null;
+        const { totals } = this.statTotals(inventory);
+        return Object.fromEntries(caps.map(([stat, cap]) => [stat, cap - (totals[stat] || 0)]));
     }
 
     // Shared filters: class, level, era, events and ignored augs. Era, events and ignoring are about getting
@@ -207,16 +248,16 @@ export class Optimizer {
     }
 
     // Top augs for a mask of slot types, best score first. socket narrows to what fits that socket.
-    rank(typeMask, settings, maxLevel, socket, limit = OPTION_LIMIT) {
+    rank(typeMask, settings, maxLevel, socket, limit = OPTION_LIMIT, room = null) {
         const weights = this.weightsFor(socket?.profile, settings);
         const tiebreakWeights = this.weightsFor(null, settings);
         const rows = [];
         for (const aug of this.augs) {
             if ((aug.t & typeMask) === 0) continue;
             if (socket && (!hasBit(aug.sl, socket.slot) || !gearFits(aug.r, socket))) continue;
-            const score = Optimizer.score(aug, weights);
+            const score = Optimizer.score(aug, weights, room);
             if (score <= 0 || !this.passesFilters(aug, settings, maxLevel)) continue;
-            rows.push({ aug, score, tiebreak: Optimizer.score(aug, tiebreakWeights) });
+            rows.push({ aug, score, tiebreak: Optimizer.score(aug, tiebreakWeights, room) });
         }
         rows.sort((a, b) => b.score - a.score || b.tiebreak - a.tiebreak || a.aug.n.localeCompare(b.aug.n));
         return rows.slice(0, limit);
@@ -253,13 +294,22 @@ export class Optimizer {
 
     socketOptions(socket, settings) {
         const weights = this.weightsFor(socket.profile, settings);
-        const options = this.rank(2 ** (socket.augType - 1), settings, settings.level, socket, OPTION_LIMIT)
+        const mask = 2 ** (socket.augType - 1);
+        const options = this.rank(mask, settings, settings.level, socket, OPTION_LIMIT, socket.room)
             .map((row) => ({ aug: row.aug, score: row.score }));
+        // Other sockets may fill the caps, so the best augs with no room left are candidates too
+        if (socket.room) {
+            const full = Object.fromEntries(Object.keys(socket.room).map((stat) => [stat, 0]));
+            const listed = new Set(options.map((option) => option.aug.id));
+            for (const row of this.rank(mask, settings, settings.level, socket, OPTION_LIMIT, full)) {
+                if (!listed.has(row.aug.id)) options.push({ aug: row.aug, score: Optimizer.score(row.aug, weights, socket.room) });
+            }
+        }
         if (socket.currentId) {
             const aug = this.byId.get(socket.currentId) || { id: socket.currentId, n: socket.currentName, s: {} };
             let current = options.find((option) => option.aug.id === socket.currentId);
             if (!current) {
-                current = { aug, score: Optimizer.score(aug, weights) };
+                current = { aug, score: Optimizer.score(aug, weights, socket.room) };
                 options.push(current);
             }
             current.isCurrent = true;
@@ -311,7 +361,16 @@ export class Optimizer {
         const targets = all.filter((socket) => socket.augType !== SPELL_AUG_TYPE && socket.augType !== PURITY_AUG_TYPE);
         const wornIn = new Map();
         for (const socket of targets) if (socket.currentId) wornIn.set(socket.currentId, socket.slotName);
+        const room = this.capRoom(inventory, settings);
+        // A socket's room is what's left with that socket emptied
+        if (room) {
+            for (const socket of targets) {
+                const current = this.byId.get(socket.currentId);
+                socket.room = Object.fromEntries(Object.entries(room).map(([stat, left]) => [stat, left + statOf(current, stat)]));
+            }
+        }
         this.assign(targets, settings);
+        if (room) this.settleCaps(targets, settings);
 
         const usedBy = new Map();
         for (const socket of targets) {
@@ -339,6 +398,44 @@ export class Optimizer {
             twoHand: this.twoHandWhatIf(targets, inventory, settings),
             spellSockets: all.filter((socket) => socket.augType === SPELL_AUG_TYPE),
         };
+    }
+
+    // The assignment scores each socket as if it alone used the room under a cap. Re-pick each socket
+    // against what the others now add until nothing changes; every change raises the total, so it ends.
+    settleCaps(targets, settings) {
+        const roomFor = (socket) => {
+            const room = { ...socket.room };
+            for (const other of targets) {
+                if (other === socket) continue;
+                for (const stat of Object.keys(room)) room[stat] -= statOf(other.choice?.aug, stat) - statOf(other.current?.aug, stat);
+            }
+            return room;
+        };
+        const rescore = (socket) => {
+            const weights = this.weightsFor(socket.profile, settings);
+            const room = roomFor(socket);
+            for (const option of socket.options) option.score = Optimizer.score(option.aug, weights, room);
+        };
+        for (let pass = 0, moved = true; moved && pass < 20; pass++) {
+            moved = false;
+            for (const socket of targets) {
+                rescore(socket);
+                const taken = new Set(targets.filter((other) => other !== socket).map((other) => other.choice?.aug.k).filter(Boolean));
+                let best = socket.choice;
+                for (const option of socket.options) {
+                    if (option.aug.k && taken.has(option.aug.k)) continue;
+                    if (option.score > (best?.score ?? 0)) best = option;
+                }
+                if (best !== socket.choice) {
+                    socket.choice = best;
+                    moved = true;
+                }
+            }
+        }
+        for (const socket of targets) {
+            rescore(socket);
+            socket.options.sort((a, b) => b.score - a.score || Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)));
+        }
     }
 
     // Turns an optimize() result into steps: chains of moves (an aug moved out of one slot sets off a run

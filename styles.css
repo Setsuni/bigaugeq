@@ -136,9 +136,10 @@ button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 summary { cursor: pointer; margin: 6px 0; }
 
-.weights { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 16px; margin: 8px 0; }
-.weights label { justify-content: space-between; white-space: nowrap; }
-.weights input { flex: none; width: 5.5em; }
+.weights { margin: 8px 0; }
+.weights-table { width: auto; }
+.weights-table td { vertical-align: middle; white-space: nowrap; }
+tr.total td { border-top: 2px solid var(--border); }
 
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 0; }
 .tabs button { border-radius: 6px 6px 0 0; border-bottom: none; padding: 6px 14px; }
@@ -199,3 +200,4 @@ a.report { color: var(--muted); font-size: 11px; margin-left: 4px; }
     .settings-row label:has(select) { width: 100%; }
     .settings-row select { flex: 1; min-width: 0; }
 }
+td.item { min-width: 16em; }
