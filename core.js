@@ -241,7 +241,10 @@ export class Optimizer {
     passesFilters(aug, settings, maxLevel) {
         if (settings.myClassOnly && !hasBit(aug.c, settings.classIndex)) return false;
         if (maxLevel > 0 && aug.l > maxLevel) return false;
+        // Augs in sockets the optimizer doesn't manage stay where they are, so they aren't available
+        if (settings.copies && !settings.copies.get(aug.id)) return false;
         if (settings.ownedIds?.has(aug.id)) return true;
+        if (settings.ownedOnly) return false;
         if (settings.ignored?.has(aug.id)) return false;
         const { era, isEvent } = this.effective(aug);
         if (isEvent && !settings.includeEvents) return false;
@@ -289,9 +292,22 @@ export class Optimizer {
         return sockets.sort((a, b) => order(a) - order(b) || a.augType - b.augType);
     }
 
-    // An option's "only once" key: its lore group.
+    // An option's "limited use" key: its lore group, or with only owned augs, the aug itself
     static optionKey(option) {
-        return option.aug.k || null;
+        return option.key ?? option.aug.k ?? null;
+    }
+
+    // How many sockets can share a key: one for a lore group, otherwise the copies you have
+    static keyLimit(option, settings) {
+        if (!settings.copies) return option.aug.k ? 1 : Infinity;
+        return option.aug.k ? Math.min(1, settings.copies.get(option.aug.id) || 0) : settings.copies.get(option.aug.id) || 0;
+    }
+
+    // Augs in your bags, bank or depot, or worn anywhere
+    ownedIds(inventory) {
+        const ids = new Set(inventory.owned.keys());
+        for (const item of inventory.worn) for (const aug of item.augs) if (aug.id) ids.add(aug.id);
+        return ids;
     }
 
     socketOptions(socket, settings) {
@@ -319,6 +335,7 @@ export class Optimizer {
             current.isCurrent = true;
             socket.current = current;
         }
+        if (settings.copies) for (const option of options) option.key = option.aug.k || `id:${option.aug.id}`;
         return options.sort(compareOptions);
     }
 
@@ -334,7 +351,13 @@ export class Optimizer {
             socket.bestByKey = new Map();
             for (const option of socket.options) {
                 const key = Optimizer.optionKey(option);
-                if (key && !socket.bestByKey.has(key)) socket.bestByKey.set(key, option);
+                if (!key) continue;
+                // Each copy is its own column, so the assignment uses an aug at most that many times
+                const copies = Math.min(Optimizer.keyLimit(option, settings), targets.length);
+                for (let copy = 0; copy < copies; copy++) {
+                    const column = copies > 1 ? `${key}#${copy}` : key;
+                    if (!socket.bestByKey.has(column)) socket.bestByKey.set(column, option);
+                }
             }
             gain[index] = new Map();
             for (const [key, option] of socket.bestByKey) {
@@ -357,13 +380,14 @@ export class Optimizer {
     }
 
     optimize(inventory, baseSettings) {
-        const ownedIds = new Set(inventory.owned.keys());
-        for (const item of inventory.worn) for (const aug of item.augs) if (aug.id) ownedIds.add(aug.id);
-        const settings = { ...baseSettings, ownedIds };
+        const settings = { ...baseSettings, ownedIds: this.ownedIds(inventory) };
         const all = this.sockets(inventory);
         const targets = all.filter((socket) => socket.augType !== SPELL_AUG_TYPE && socket.augType !== PURITY_AUG_TYPE);
-        const wornIn = new Map();
-        for (const socket of targets) if (socket.currentId) wornIn.set(socket.currentId, socket.slotName);
+        const bagCount = new Map([...inventory.owned].map(([id, entries]) => [id, entries.reduce((total, entry) => total + entry.count, 0)]));
+        if (settings.ownedOnly) {
+            settings.copies = new Map(bagCount);
+            for (const socket of targets) if (socket.currentId) settings.copies.set(socket.currentId, (settings.copies.get(socket.currentId) || 0) + 1);
+        }
         const room = this.capRoom(inventory, settings);
         // A socket's room is what's left with that socket emptied
         if (room) {
@@ -375,25 +399,33 @@ export class Optimizer {
         this.assign(targets, settings);
         if (room) this.settleCaps(targets, settings);
 
+        // Where each new aug comes from: a spare copy in your bags, then one taken out of a slot that's
+        // getting something else (lore augs always come from where they're worn), otherwise it's farmed.
+        // The slot giving up a moved aug shows where it went; its own loss is paid back there.
         const usedBy = new Map();
+        const freed = new Map();
+        for (const socket of targets) {
+            if (socket.currentId && !socket.choice?.isCurrent) freed.set(socket.currentId, [...(freed.get(socket.currentId) || []), socket]);
+        }
         for (const socket of targets) {
             const choice = socket.choice;
             if (!choice) continue;
             const key = Optimizer.optionKey(choice);
             if (key) usedBy.set(key, socket.slotName);
-            // A lore aug you already wear elsewhere gets moved, not farmed
-            if (!choice.isCurrent && choice.aug.k) choice.movedFrom = wornIn.get(choice.aug.id);
-            if (!choice.isCurrent && !choice.movedFrom) choice.owned = inventory.owned.get(choice.aug.id) || null;
-        }
-        // The slot giving up a moved aug shows where it went; its own loss is paid back there
-        const socketByCurrent = new Map(targets.filter((socket) => socket.currentId).map((socket) => [socket.currentId, socket]));
-        for (const socket of targets) {
-            if (!socket.choice?.movedFrom) continue;
-            const source = socketByCurrent.get(socket.choice.aug.id);
-            if (!source) continue;
-            source.movedTo = socket.slotName;
-            source.movedToSocket = socket;
-            socket.moveSource = source;
+            if (choice.isCurrent) continue;
+            const id = choice.aug.id;
+            if (!choice.aug.k && bagCount.get(id) > 0) {
+                bagCount.set(id, bagCount.get(id) - 1);
+                choice.owned = inventory.owned.get(id);
+                continue;
+            }
+            const source = freed.get(id)?.shift();
+            if (source) {
+                choice.movedFrom = source.slotName;
+                source.movedTo = socket.slotName;
+                source.movedToSocket = socket;
+                socket.moveSource = source;
+            } else choice.owned = inventory.owned.get(id) || null;
         }
         for (const socket of targets) socket.usedBy = usedBy;
         return {
@@ -426,10 +458,15 @@ export class Optimizer {
             moved = false;
             for (const socket of targets) {
                 rescore(socket);
-                const taken = new Set(targets.filter((other) => other !== socket).map((other) => other.choice?.aug.k).filter(Boolean));
+                const uses = new Map();
+                for (const other of targets) {
+                    const key = other !== socket && other.choice && Optimizer.optionKey(other.choice);
+                    if (key) uses.set(key, (uses.get(key) || 0) + 1);
+                }
                 let best = socket.choice;
                 for (const option of socket.options) {
-                    if (option.aug.k && taken.has(option.aug.k)) continue;
+                    const key = Optimizer.optionKey(option);
+                    if (key && (uses.get(key) || 0) >= Optimizer.keyLimit(option, settings)) continue;
                     const better = best ? option.score - best.score || -compareTiebreak(option.tb, best.tb) : option.score;
                     if (better > 0) best = option;
                 }
@@ -493,7 +530,7 @@ export class Optimizer {
     // Type 14 sockets on visible armor and what to put in each to reach PURITY_TARGET. Spare purity augs in
     // bags or bank go to the emptiest slots first; otherwise the best one you could get is named.
     purityPlan(inventory, settings) {
-        const ownedIds = new Set(inventory.owned.keys());
+        const ownedIds = this.ownedIds(inventory);
         const rows = this.sockets(inventory)
             .filter((socket) => socket.augType === PURITY_AUG_TYPE && VISIBLE_SLOTS.has(socket.slot))
             .map((socket) => {
@@ -522,6 +559,7 @@ export class Optimizer {
                 spare.splice(index, 1);
                 continue;
             }
+            if (settings.ownedOnly) continue;
             const best = this.augs.filter((aug) => aug.pu > row.purity && fits(aug, row.socket)
                     && this.passesFilters(aug, { ...settings, ownedIds }, settings.level))
                 .sort((a, b) => b.pu - a.pu || b.l - a.l)[0];

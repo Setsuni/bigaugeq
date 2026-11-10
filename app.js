@@ -39,7 +39,7 @@ function storageSet(key, value) {
 
 function defaultSettings() {
     return {
-        classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false, caps: {},
+        classCode: 'SHD', level: 85, eraCap: 85, andOlder: true, myClassOnly: true, includeEvents: false, ownedOnly: false, caps: {},
         weights: {}, shieldAc: null, ...classSympathetic('SHD'), ...classBow('SHD'),
     };
 }
@@ -269,7 +269,8 @@ function optimizerTab() {
     }
     const caps = cappedStats().map(([key, label]) => `<span class="chip"><strong>${label}</strong> ${gearStats.totals[key] || 0} &rarr; ${after[key] || 0}
         <span class="muted">/ ${settings.caps[key]} cap</span></span>`).join('');
-    return `${noWeights}${caps ? `<div class="chips">${caps}</div>` : ''}<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
+    const ownedNote = settings.ownedOnly ? '<p class="summary good"><strong>Only augs you already have:</strong> your bags, bank and depot, plus moving augs you already wear.</p>' : '';
+    return `${noWeights}${ownedNote}${caps ? `<div class="chips">${caps}</div>` : ''}<p class="summary">Score ${now} now, ${best} optimized (${gainHtml(best - now)}). ${settings.sympathetic ? 'Weapon sympathetic procs' : 'Weapon damage'} ${gainHtml(damage, weaponUnit())}.
         <span class="muted">Gain is your stat-weight score; the line under it is the actual stat change. Lore augs are used once.
         Augs you already own are always included, whatever expansion you pick; the expansion only limits augs to go get. Expand a slot for more options.</span></p>
         <table><thead><tr><th scope="col">Slot</th><th scope="col">Current</th><th scope="col">Optimized</th><th scope="col" class="num">Gain</th>${withSource ? '<th scope="col">Source</th>' : ''}</tr></thead>
@@ -384,8 +385,10 @@ function farmTable(entries, owned) {
 
 function farmTab() {
     if (!result) return '<p class="muted">Load your inventory file first.</p>';
+    const toFarm = settings.ownedOnly ? '<p class="muted">Nothing: "Only augs I already have" is on.</p>'
+        : `<p class="muted">Click an aug to see where it drops.</p>${farmTable(farmEntries(false), false)}`;
     return `<h3 class="good">Already own - equip these</h3>${farmTable(farmEntries(true), true)}
-        <h3>To farm</h3><p class="muted">Click an aug to see where it drops.</p>${farmTable(farmEntries(false), false)}`;
+        <h3>To farm</h3>${toFarm}`;
 }
 
 // ---------- type 3 tab ----------
@@ -482,7 +485,9 @@ function runSearch() {
     const mask = $('searchTypes').value.split(/[^0-9]+/).map(Number).filter((type) => type >= 1 && type <= 30)
         .reduce((total, type) => total | (1 << (type - 1)), 0);
     const room = optimizer.capRoom(inventory, settings);
-    const rows = mask ? optimizer.rank(mask, { ...runSettings(), myClassOnly: settings.myClassOnly }, Number($('searchLevel').value) || 0, null, 100, room) : [];
+    const searchSettings = { ...runSettings(), myClassOnly: settings.myClassOnly, ownedOnly: settings.ownedOnly && Boolean(inventory),
+        ownedIds: inventory ? optimizer.ownedIds(inventory) : null };
+    const rows = mask ? optimizer.rank(mask, searchSettings, Number($('searchLevel').value) || 0, null, 100, room) : [];
     const weighted = Object.keys(settings.weights).map((key) => [key, STATS.find(([stat]) => stat === key)?.[1] || key]);
     $('searchCount').textContent = `${rows.length} results`;
     $('searchResults').innerHTML = `<table><thead><tr><th>Name</th><th>Era</th><th>Types</th><th>Gear</th><th class="num">Score</th>
@@ -592,6 +597,7 @@ function renderSettings() {
     $('andOlder').checked = settings.andOlder;
     $('myClassOnly').checked = settings.myClassOnly;
     $('includeEvents').checked = settings.includeEvents;
+    $('ownedOnly').checked = settings.ownedOnly;
     $('shieldAc').value = settings.shieldAc ?? '';
     if (!hasWeights()) $('weightsPanel').open = true;
     weightRows = Object.entries(settings.weights).map(([stat, worth]) => ({ stat, worth, cap: settings.caps?.[stat] ?? null }));
@@ -735,7 +741,7 @@ function wireSettings() {
     });
     $('level').addEventListener('change', () => { settings.level = Number($('level').value) || 1; changed(); });
     $('era').addEventListener('change', () => { settings.eraCap = Number($('era').value); changed(); });
-    for (const id of ['andOlder', 'myClassOnly', 'includeEvents']) {
+    for (const id of ['andOlder', 'myClassOnly', 'includeEvents', 'ownedOnly']) {
         $(id).addEventListener('change', () => { settings[id] = $(id).checked; changed(); });
     }
     $('shieldAc').addEventListener('change', () => {
